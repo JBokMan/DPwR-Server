@@ -4,6 +4,7 @@ import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.arrow.plasma.exceptions.DuplicateObjectException;
 
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.UUID;
 
 public class InfinimumDBServer {
@@ -54,4 +55,16 @@ public class InfinimumDBServer {
         return new byte[0];
     }
 
+    public byte[] generateUUID(byte[] object) {
+        UUID uuidOfObject = UUID.nameUUIDFromBytes(object);
+        ByteBuffer bb = ByteBuffer.wrap(new byte[20]);
+        bb.putLong(uuidOfObject.getMostSignificantBits());
+        bb.putLong(uuidOfObject.getLeastSignificantBits());
+        return bb.array();
+    }
+
+    public boolean isThisServerResponsible(byte[] object) {
+        int responsibleServerID = Math.abs(Arrays.hashCode(object) % serverCount);
+        return this.serverID == responsibleServerID;
+    }
 }
