@@ -1,67 +1,57 @@
 package server;
 
-import jep.Interpreter;
-import jep.SharedInterpreter;
+import org.apache.arrow.plasma.PlasmaClient;
+import org.apache.arrow.plasma.exceptions.DuplicateObjectException;
+
+import java.nio.ByteBuffer;
+import java.util.UUID;
 
 public class InfinimumDBServer {
 
-    private final Interpreter interpreter = new SharedInterpreter();
+    final int serverID = 0;
+    int serverCount = 1;
+
+    private PlasmaClient plasmaClient;
     private final String plasmaFilePath;
 
     public InfinimumDBServer(String plasmaFilePath, Integer listeningPort) {
         this.plasmaFilePath = plasmaFilePath;
-        initializeServer(listeningPort);
+        connectPlasma();
     }
 
-    public InfinimumDBServer(String plasmaFilePath, Integer plasmaPort, Integer listeningPort,
+    public InfinimumDBServer(String plasmaFilePath, Integer listeningPort,
                              String mainServerHostAddress, Integer mainServerPort) {
         this.plasmaFilePath = plasmaFilePath;
-        initializeSecondaryServer(listeningPort, mainServerHostAddress, mainServerPort);
-    }
-
-    private void initializeSecondaryServer(Integer listeningPort,
-                                           String mainServerHostAddress, Integer mainServerPort) {
-        // TODO implement
-        initializeServer(listeningPort);
-    }
-
-    private void initializeServer(Integer listeningPort) {
         connectPlasma();
     }
 
     private void connectPlasma() {
+        System.loadLibrary("plasma_java");
         try {
-            interpreter.exec("import pyarrow.plasma as plasma");
-            interpreter.exec("client = plasma.connect(\"" + this.plasmaFilePath + "\")");
+            this.plasmaClient = new PlasmaClient(plasmaFilePath, "", 0);
         } catch (Exception e) {
-            System.err.println("Plasma server not reachable");
+            System.err.println("PlasmaDB-Server could not be reached");
         }
     }
 
-    public Object putString(String string) {
+    public void put(byte[] id, byte[] object) {
         try {
-            interpreter.exec("object_id = client.put(\"" + string + "\")");
-            return interpreter.getValue("object_id", Object.class);
+            this.plasmaClient.put(id, object, new byte[0]);
+        } catch (DuplicateObjectException e) {
+            this.plasmaClient.delete(id);
+            this.put(id, object);
         } catch (Exception e) {
-            System.err.println("Plasma server no longer reachable, trying to reconnect");
-            try {
-                connectPlasma();
-                return putString(string);
-            } catch (Exception ex) {
-                return null;
-            }
+            System.err.println(e.getMessage());
         }
     }
 
-    public String getString(Object id) {
+    public byte[] get(byte[] uuid) {
         try {
-            interpreter.set("object_id", id);
-            return interpreter.getValue("client.get(object_id)", String.class);
+            return this.plasmaClient.get(uuid, 100, false);
         } catch (Exception e) {
-            System.err.println("Plasma server no longer reachable, trying to reconnect");
-            connectPlasma();
-            return null;
+            System.err.println(e.getMessage());
         }
+        return new byte[0];
     }
 
 }
