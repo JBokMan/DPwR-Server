@@ -8,9 +8,9 @@
         <processorPath useClasspath="false">
           <entry name="$USER_HOME$/.gradle/caches/modules-2/files-2.1/org.projectlombok/lombok/1.18.20/18bcea7d5df4d49227b4a0743a536208ce4825bb/lombok-1.18.20.jar" />
         </processorPath>
-        <module name="infinileap.daemon.test" />
-        <module name="infinileap.example.test" />
-        <module name="infinileap.daemon.main" />
+        <module name="de.hhu.bsinfo.infinileap.daemon.main" />
+        <module name="de.hhu.bsinfo.infinileap.example.test" />
+        <module name="de.hhu.bsinfo.infinileap.daemon.test" />
       </profile>
       <profile name="Gradle Imported" enabled="true">
         <outputRelativeToContentRoot value="true" />
@@ -21,7 +21,7 @@
           <entry name="$USER_HOME$/.gradle/caches/modules-2/files-2.1/net.sf.jopt-simple/jopt-simple/4.6/306816fb57cf94f108a43c95731b08934dcae15c/jopt-simple-4.6.jar" />
           <entry name="$USER_HOME$/.gradle/caches/modules-2/files-2.1/org.apache.commons/commons-math3/3.2/ec2544ab27e110d2d431bdad7d538ed509b21e62/commons-math3-3.2.jar" />
         </processorPath>
-        <module name="infinileap.example.main" />
+        <module name="de.hhu.bsinfo.infinileap.example.main" />
       </profile>
     </annotationProcessing>
     <bytecodeTargetLevel target="19">
