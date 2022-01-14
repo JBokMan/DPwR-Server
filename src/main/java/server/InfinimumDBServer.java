@@ -1,5 +1,6 @@
 package server;
 
+import event.listener.OnMessageEventListenerImpl;
 import infinileap.server.InfinileapServer;
 import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.arrow.plasma.exceptions.DuplicateObjectException;
@@ -21,7 +22,7 @@ public class InfinimumDBServer {
     public InfinimumDBServer(String plasmaFilePath, String listenAddress, Integer listenPort) {
         this.plasmaFilePath = plasmaFilePath;
         this.infinileapServer = new InfinileapServer(listenAddress);
-        this.infinileapServer.registerOnMessageEventListener(this);
+        this.infinileapServer.registerOnMessageEventListener(new OnMessageEventListenerImpl());
         connectPlasma();
     }
 
