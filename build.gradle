@@ -26,6 +26,7 @@ repositories {
 
 dependencies {
     implementation "de.hhu.bsinfo:core"
+    implementation "de.hhu.bsinfo:example"
 
     // Lombok
     compileOnly "org.projectlombok:lombok:1.18.22"
