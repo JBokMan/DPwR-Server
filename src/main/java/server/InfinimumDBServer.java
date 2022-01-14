@@ -1,5 +1,6 @@
 package server;
 
+import infinileap.server.InfinileapServer;
 import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.arrow.plasma.exceptions.DuplicateObjectException;
 
@@ -15,16 +16,22 @@ public class InfinimumDBServer {
     private PlasmaClient plasmaClient;
     private final String plasmaFilePath;
 
-    public InfinimumDBServer(String plasmaFilePath, Integer listeningPort) {
+    private final InfinileapServer infinileapServer;
+
+    public InfinimumDBServer(String plasmaFilePath, String listenAddress, Integer listenPort) {
         this.plasmaFilePath = plasmaFilePath;
+        this.infinileapServer = new InfinileapServer(listenAddress);
+        this.infinileapServer.registerOnMessageEventListener(this);
         connectPlasma();
     }
 
-    public InfinimumDBServer(String plasmaFilePath, Integer listeningPort,
+    /*public InfinimumDBServer(String plasmaFilePath, String listenAddress, Integer listeningPort,
                              String mainServerHostAddress, Integer mainServerPort) {
         this.plasmaFilePath = plasmaFilePath;
+        this.infinileapServer = new InfinileapServer(listenAddress);
+        this.infinileapServer.registerOnMessageEventListener(this);
         connectPlasma();
-    }
+    }*/
 
     private void connectPlasma() {
         System.loadLibrary("plasma_java");
@@ -66,5 +73,9 @@ public class InfinimumDBServer {
     public boolean isThisServerResponsible(byte[] object) {
         int responsibleServerID = Math.abs(Arrays.hashCode(object) % serverCount);
         return this.serverID == responsibleServerID;
+    }
+
+    public void listen() {
+        infinileapServer.listen();
     }
 }
