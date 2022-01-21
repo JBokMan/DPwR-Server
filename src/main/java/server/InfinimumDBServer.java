@@ -1,20 +1,22 @@
 package server;
 
 import de.hhu.bsinfo.infinileap.binding.*;
+import de.hhu.bsinfo.infinileap.example.util.CommunicationBarrier;
 import de.hhu.bsinfo.infinileap.example.util.Requests;
 import de.hhu.bsinfo.infinileap.util.CloseException;
 import de.hhu.bsinfo.infinileap.util.ResourcePool;
 import jdk.incubator.foreign.MemoryAddress;
 import jdk.incubator.foreign.MemorySegment;
 import jdk.incubator.foreign.ResourceScope;
+import jdk.incubator.foreign.ValueLayout;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.arrow.plasma.exceptions.DuplicateObjectException;
 
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.time.Duration;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -39,6 +41,9 @@ public class InfinimumDBServer {
     private Worker worker;
     private final InetSocketAddress listenAddress;
     private final AtomicBoolean messageReceived = new AtomicBoolean(false);
+    private Endpoint endpoint;
+    private Context context;
+    private final CommunicationBarrier barrier = new CommunicationBarrier();
 
     public InfinimumDBServer(String plasmaFilePath, String listenAddress, Integer listenPort) {
         this.listenAddress = new InetSocketAddress(listenAddress, listenPort);
@@ -128,7 +133,7 @@ public class InfinimumDBServer {
         log.info("Initializing context");
 
         // Initialize UCP context
-        Context context = pushResource(
+        this.context = pushResource(
                 Context.initialize(contextParameters, configuration)
         );
 
@@ -155,6 +160,11 @@ public class InfinimumDBServer {
                 .setConnectionHandler(connectionRequest::set);
 
         log.info("Listening for new connection requests on {}", listenAddress);
+        try {
+            Thread.sleep(Duration.ofSeconds(5).toMillis());
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
         pushResource(this.worker.createListener(listenerParams));
 
         while (true) {
@@ -162,8 +172,7 @@ public class InfinimumDBServer {
 
             var endpointParameters = new EndpointParameters()
                     .setConnectionRequest(connectionRequest.get());
-
-            this.worker.createEndpoint(endpointParameters);
+            this.endpoint = this.worker.createEndpoint(endpointParameters);
 
             // Register local handler
             var params = new HandlerParameters()
@@ -185,19 +194,59 @@ public class InfinimumDBServer {
         log.info("Received operation name {} in header", header.getUtf8String(0L));
         String[] temp = data.getUtf8String(0L).split(",");
         log.info("Received size {} and memory address {} in body", temp[0], temp[1]);
-        int size = Integer.parseInt(temp[0]);
 
-        // ToDo get object per RDMA from Client (look at Memory example)
-        // Save object to PlasmaStore using MemorySegments
+        long size = Long.parseLong(temp[0]);
+        Long address = Long.decode(temp[1].substring(7));
 
-        String object = "Hello World Man!";
-        byte[] objectID = generateUUID(object.getBytes());
-        ByteBuffer byteBuffer = plasmaClient.create(objectID, size, new byte[0]);
-        for (byte b : object.getBytes()) {
+        MemoryAddress memoryAddress = MemoryAddress.ofLong(address);
+        MemorySegment memorySegment = MemorySegment.ofAddress(memoryAddress, size, this.scope);
+        MemoryRegion memoryRegion = null;
+        try {
+            memoryRegion = this.context.mapMemory(memorySegment);
+        } catch (ControlException e) {
+            e.printStackTrace();
+        }
+        MemoryDescriptor memoryDescriptor = memoryRegion.descriptor();
+        RemoteKey remoteKey = null;
+        try {
+            remoteKey = this.endpoint.unpack(memoryDescriptor);
+        } catch (ControlException e) {
+            e.printStackTrace();
+        }
+        MemorySegment targetBuffer = MemorySegment.allocateNative(memoryDescriptor.remoteSize(), scope);
+        pushResource(remoteKey);
+
+        CommunicationBarrier barrier2 = new CommunicationBarrier();
+        var request = endpoint.get(targetBuffer, memoryDescriptor.remoteAddress(), remoteKey, new RequestParameters()
+                .setReceiveCallback(barrier2::release));
+
+        try {
+            Requests.await(this.worker, barrier2);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+        Requests.release(request);
+
+        log.info("Read \"{}\" from remote buffer", new String(targetBuffer.toArray(ValueLayout.JAVA_BYTE)));
+
+        byte[] object = targetBuffer.toArray(ValueLayout.JAVA_BYTE);
+        byte[] objectID = generateUUID(object);
+        ByteBuffer byteBuffer = plasmaClient.create(objectID, (int) size, new byte[0]);
+
+        log.info("Created new ByteBuffer in plasma store");
+
+        for (byte b : object) {
             byteBuffer.put(b);
         }
         plasmaClient.seal(objectID);
 
+        log.info("Sealed new object in plasma store");
+
+        final var completion = MemorySegment.allocateNative(Byte.BYTES, scope);
+        request = endpoint.sendTagged(completion, Tag.of(0L));
+
+        Requests.release(request);
 
         messageReceived.set(true);
         return Status.OK;
