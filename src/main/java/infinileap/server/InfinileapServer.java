@@ -6,10 +6,13 @@ import de.hhu.bsinfo.infinileap.example.util.Requests;
 import de.hhu.bsinfo.infinileap.util.CloseException;
 import de.hhu.bsinfo.infinileap.util.ResourcePool;
 import event.listener.OnMessageEventListener;
+import jdk.incubator.foreign.MemoryAddress;
+import jdk.incubator.foreign.MemorySegment;
 import jdk.incubator.foreign.ResourceScope;
 import lombok.extern.slf4j.Slf4j;
 
 import java.net.InetSocketAddress;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Slf4j
@@ -22,9 +25,13 @@ public class InfinileapServer {
             ContextParameters.Feature.TAG, ContextParameters.Feature.RMA, ContextParameters.Feature.WAKEUP, ContextParameters.Feature.AM,
             ContextParameters.Feature.ATOMIC_32, ContextParameters.Feature.ATOMIC_64, ContextParameters.Feature.STREAM
     };
+    private static final Identifier IDENTIFIER = new Identifier(0x01);
     private Context context;
     private Worker worker;
+    private Endpoint endpoint;
     private final InetSocketAddress listenAddress;
+    private Listener listener;
+    private final AtomicBoolean messageReceived = new AtomicBoolean(false);
 
     private OnMessageEventListener onMessageEventListener;
 
@@ -50,6 +57,7 @@ public class InfinileapServer {
     }
 
     private void initialize() throws ControlException, InterruptedException {
+
         // Create context parameters
         var contextParameters = new ContextParameters()
                 .setFeatures(FEATURE_SET)
@@ -63,7 +71,7 @@ public class InfinileapServer {
         log.info("Initializing context");
 
         // Initialize UCP context
-        context = pushResource(
+        this.context = pushResource(
                 Context.initialize(contextParameters, configuration)
         );
 
@@ -73,8 +81,8 @@ public class InfinileapServer {
         log.info("Creating worker");
 
         // Create a worker
-        worker = pushResource(
-                context.createWorker(workerParameters)
+        this.worker = pushResource(
+                this.context.createWorker(workerParameters)
         );
     }
 
@@ -88,25 +96,47 @@ public class InfinileapServer {
     }
 
     private void listenLoop() throws ControlException, InterruptedException {
-
         var connectionRequest = new AtomicReference<ConnectionRequest>();
         var listenerParams = new ListenerParameters()
                 .setListenAddress(listenAddress)
                 .setConnectionHandler(connectionRequest::set);
 
         log.info("Listening for new connection requests on {}", listenAddress);
-        pushResource(worker.createListener(listenerParams));
+        this.listener = pushResource(this.worker.createListener(listenerParams));
+
         while (true) {
-            Requests.await(worker, connectionRequest);
+            Requests.await(this.worker, connectionRequest);
 
             var endpointParameters = new EndpointParameters()
                     .setConnectionRequest(connectionRequest.get());
 
-            Endpoint endpoint = worker.createEndpoint(endpointParameters);
-            if (this.onMessageEventListener != null) {
-                onMessageEventListener.onMessageEvent(context, worker, endpoint, scope);
+            this.endpoint = this.worker.createEndpoint(endpointParameters);
+
+            // Register local handler
+            var params = new HandlerParameters()
+                    .setId(IDENTIFIER)
+                    .setCallback(this::onActiveMessage)
+                    .setFlags(HandlerParameters.Flag.WHOLE_MESSAGE);
+
+            this.worker.setHandler(params);
+
+            while (!messageReceived.get()) {
+                this.worker.progress();
             }
+            messageReceived.set(false);
             connectionRequest.set(null);
         }
+    }
+
+    private Status onActiveMessage(MemoryAddress argument, MemorySegment header, MemorySegment data, MemoryAddress params) {
+        log.info("Received operation name {} in header", header.getUtf8String(0L));
+        String[] temp = data.getUtf8String(0L).split(",");
+        log.info("Received size {} and memory address {} in body", temp[0], temp[1]);
+
+        // ToDo get object per RDMA from Client (look at Memory example)
+        // Save object to PlasmaStore using MemorySegments
+
+        messageReceived.set(true);
+        return Status.OK;
     }
 }
