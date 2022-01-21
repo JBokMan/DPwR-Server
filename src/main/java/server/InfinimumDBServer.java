@@ -21,9 +21,10 @@ public class InfinimumDBServer {
 
     public InfinimumDBServer(String plasmaFilePath, String listenAddress, Integer listenPort) {
         this.plasmaFilePath = plasmaFilePath;
-        this.infinileapServer = new InfinileapServer(listenAddress);
+        this.infinileapServer = new InfinileapServer(listenAddress, listenPort);
         this.infinileapServer.registerOnMessageEventListener(new OnMessageEventListenerImpl());
         connectPlasma();
+        listen();
     }
 
     /*public InfinimumDBServer(String plasmaFilePath, String listenAddress, Integer listeningPort,
@@ -39,7 +40,7 @@ public class InfinimumDBServer {
         try {
             this.plasmaClient = new PlasmaClient(plasmaFilePath, "", 0);
         } catch (Exception e) {
-            System.err.println("PlasmaDB-Server could not be reached");
+            System.err.println("PlasmaDB could not be reached");
         }
     }
 

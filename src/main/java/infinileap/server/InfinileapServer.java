@@ -2,7 +2,6 @@ package infinileap.server;
 
 
 import de.hhu.bsinfo.infinileap.binding.*;
-import de.hhu.bsinfo.infinileap.example.util.Constants;
 import de.hhu.bsinfo.infinileap.example.util.Requests;
 import de.hhu.bsinfo.infinileap.util.CloseException;
 import de.hhu.bsinfo.infinileap.util.ResourcePool;
@@ -29,8 +28,8 @@ public class InfinileapServer {
 
     private OnMessageEventListener onMessageEventListener;
 
-    public InfinileapServer(String listenAddress) {
-        this.listenAddress = new InetSocketAddress(listenAddress, Constants.DEFAULT_PORT);
+    public InfinileapServer(String listenAddress, Integer listenPort) {
+        this.listenAddress = new InetSocketAddress(listenAddress, listenPort);
     }
 
     public void listen() {
