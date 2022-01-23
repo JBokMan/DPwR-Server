@@ -5,25 +5,24 @@ import de.hhu.bsinfo.infinileap.example.util.CommunicationBarrier;
 import de.hhu.bsinfo.infinileap.example.util.Requests;
 import de.hhu.bsinfo.infinileap.util.CloseException;
 import de.hhu.bsinfo.infinileap.util.ResourcePool;
-import jdk.incubator.foreign.MemoryAddress;
 import jdk.incubator.foreign.MemorySegment;
 import jdk.incubator.foreign.ResourceScope;
 import jdk.incubator.foreign.ValueLayout;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.arrow.plasma.exceptions.DuplicateObjectException;
+import org.apache.commons.lang3.SerializationUtils;
 
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
-import java.time.Duration;
 import java.util.Arrays;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Slf4j
 public class InfinimumDBServer {
 
+    private static final int OPERATION_MESSAGE_SIZE = 10;
     final int serverID = 0;
     int serverCount = 1;
 
@@ -37,10 +36,8 @@ public class InfinimumDBServer {
             ContextParameters.Feature.TAG, ContextParameters.Feature.RMA, ContextParameters.Feature.WAKEUP, ContextParameters.Feature.AM,
             ContextParameters.Feature.ATOMIC_32, ContextParameters.Feature.ATOMIC_64, ContextParameters.Feature.STREAM
     };
-    private static final Identifier IDENTIFIER = new Identifier(0x01);
     private Worker worker;
     private final InetSocketAddress listenAddress;
-    private final AtomicBoolean messageReceived = new AtomicBoolean(false);
     private Endpoint endpoint;
     private Context context;
     private final CommunicationBarrier barrier = new CommunicationBarrier();
@@ -160,79 +157,112 @@ public class InfinimumDBServer {
                 .setConnectionHandler(connectionRequest::set);
 
         log.info("Listening for new connection requests on {}", listenAddress);
-        try {
-            Thread.sleep(Duration.ofSeconds(5).toMillis());
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        }
         pushResource(this.worker.createListener(listenerParams));
 
+        long tagID = 0;
         while (true) {
             Requests.await(this.worker, connectionRequest);
 
             var endpointParameters = new EndpointParameters()
                     .setConnectionRequest(connectionRequest.get());
-            this.endpoint = this.worker.createEndpoint(endpointParameters);
+            Endpoint endpoint = this.worker.createEndpoint(endpointParameters);
 
-            // Register local handler
-            var params = new HandlerParameters()
-                    .setId(IDENTIFIER)
-                    .setCallback(this::onActiveMessage)
-                    .setFlags(HandlerParameters.Flag.WHOLE_MESSAGE);
+            handleMessage(context, worker, endpoint, scope, tagID);
 
-            this.worker.setHandler(params);
-
-            while (!messageReceived.get()) {
-                this.worker.progress();
-            }
-            messageReceived.set(false);
             connectionRequest.set(null);
+            tagID++;
         }
     }
 
-    private Status onActiveMessage(MemoryAddress argument, MemorySegment header, MemorySegment data, MemoryAddress params) {
-        log.info("Received operation name {} in header", header.getUtf8String(0L));
-        String[] temp = data.getUtf8String(0L).split(",");
-        log.info("Received size {} and memory address {} in body", temp[0], temp[1]);
+    private void handleMessage(Context context, Worker worker, Endpoint endpoint, ResourceScope scope, long tagID) {
+        final CommunicationBarrier barrier = new CommunicationBarrier();
+        // Allocate a buffer for receiving the remote's message
+        var buffer = MemorySegment.allocateNative(OPERATION_MESSAGE_SIZE, scope);
 
-        long size = Long.parseLong(temp[0]);
-        Long address = Long.decode(temp[1].substring(7));
+        // Receive the message
+        log.info("Receiving message");
+        System.out.println(tagID);
 
-        MemoryAddress memoryAddress = MemoryAddress.ofLong(address);
-        MemorySegment memorySegment = MemorySegment.ofAddress(memoryAddress, size, this.scope);
-        MemoryRegion memoryRegion = null;
+        var request = worker.receiveTagged(buffer, Tag.of(tagID), new RequestParameters()
+                .setReceiveCallback(barrier::release));
+
         try {
-            memoryRegion = this.context.mapMemory(memorySegment);
-        } catch (ControlException e) {
+            Requests.await(worker, barrier);
+        } catch (InterruptedException e) {
             e.printStackTrace();
         }
-        MemoryDescriptor memoryDescriptor = memoryRegion.descriptor();
+        System.out.println("2");
+        Requests.release(request);
+
+        String operationName =
+                SerializationUtils.deserialize(buffer.toArray(ValueLayout.JAVA_BYTE));
+        log.info("Received \"{}\"", operationName);
+        switch (operationName) {
+            case "PUT" -> {
+                log.info("Start PUT operation");
+                putOperation(worker, endpoint);
+            }
+            default -> {
+            }
+        }
+    }
+
+    private void putOperation(Worker worker, Endpoint endpoint) {
+        // Allocate a memory descriptor
+        var descriptor = new MemoryDescriptor();
+
+        // Receive the message
+        log.info("Receiving Remote Key");
+
+        var request = worker.receiveTagged(descriptor, Tag.of(0L), new RequestParameters()
+                .setReceiveCallback(barrier::release));
+
+        try {
+            Requests.await(worker, barrier);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        Requests.release(request);
+
+        // Read remote memory
         RemoteKey remoteKey = null;
         try {
-            remoteKey = this.endpoint.unpack(memoryDescriptor);
+            remoteKey = endpoint.unpack(descriptor);
         } catch (ControlException e) {
             e.printStackTrace();
         }
-        MemorySegment targetBuffer = MemorySegment.allocateNative(memoryDescriptor.remoteSize(), scope);
+        if (remoteKey == null) {
+            log.error("Remote key was null");
+            return;
+        }
+        var targetBuffer = MemorySegment.allocateNative(descriptor.remoteSize(), scope);
         pushResource(remoteKey);
 
-        CommunicationBarrier barrier2 = new CommunicationBarrier();
-        var request = endpoint.get(targetBuffer, memoryDescriptor.remoteAddress(), remoteKey, new RequestParameters()
-                .setReceiveCallback(barrier2::release));
+        request = endpoint.get(targetBuffer, descriptor.remoteAddress(), remoteKey, new RequestParameters()
+                .setReceiveCallback(barrier::release));
 
         try {
-            Requests.await(this.worker, barrier2);
+            Requests.await(worker, barrier);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        Requests.release(request);
+
+        log.info("Read \"{}\" from remote buffer", SerializationUtils.deserialize(targetBuffer.toArray(ValueLayout.JAVA_BYTE)).toString());
+
+        // Signal completion
+        final var completion = MemorySegment.allocateNative(Byte.BYTES, scope);
+        request = endpoint.sendTagged(completion, Tag.of(0L));
+
+        try {
+            Requests.await(worker, request);
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
 
-        Requests.release(request);
-
-        log.info("Read \"{}\" from remote buffer", new String(targetBuffer.toArray(ValueLayout.JAVA_BYTE)));
-
         byte[] object = targetBuffer.toArray(ValueLayout.JAVA_BYTE);
         byte[] objectID = generateUUID(object);
-        ByteBuffer byteBuffer = plasmaClient.create(objectID, (int) size, new byte[0]);
+        ByteBuffer byteBuffer = plasmaClient.create(objectID, object.length, new byte[0]);
 
         log.info("Created new ByteBuffer in plasma store");
 
@@ -243,12 +273,6 @@ public class InfinimumDBServer {
 
         log.info("Sealed new object in plasma store");
 
-        final var completion = MemorySegment.allocateNative(Byte.BYTES, scope);
-        request = endpoint.sendTagged(completion, Tag.of(0L));
-
         Requests.release(request);
-
-        messageReceived.set(true);
-        return Status.OK;
     }
 }
