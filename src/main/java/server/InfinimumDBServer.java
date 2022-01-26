@@ -11,6 +11,7 @@ import jdk.incubator.foreign.ValueLayout;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.arrow.plasma.exceptions.DuplicateObjectException;
+import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.SerializationUtils;
 
 import java.net.InetSocketAddress;
@@ -166,23 +167,31 @@ public class InfinimumDBServer {
             var endpointParameters = new EndpointParameters()
                     .setConnectionRequest(connectionRequest.get());
             Endpoint endpoint = this.worker.createEndpoint(endpointParameters);
+            String operationName = SerializationUtils.deserialize(receiveData(worker, scope, OPERATION_MESSAGE_SIZE, tagID));
 
-            handleMessage(context, worker, endpoint, scope, tagID);
+            log.info("Received \"{}\"", operationName);
+            switch (operationName) {
+                case "PUT" -> {
+                    log.info("Start PUT operation");
+                    putOperation(worker, endpoint);
+                }
+                default -> {
+                }
+            }
 
             connectionRequest.set(null);
             tagID++;
         }
     }
 
-    private void handleMessage(Context context, Worker worker, Endpoint endpoint, ResourceScope scope, long tagID) {
-        final CommunicationBarrier barrier = new CommunicationBarrier();
-        // Allocate a buffer for receiving the remote's message
-        var buffer = MemorySegment.allocateNative(OPERATION_MESSAGE_SIZE, scope);
+    private byte[] receiveData(Worker worker, ResourceScope scope, int size, long tagID) {
+        var buffer = MemorySegment.allocateNative(size, scope);
 
         // Receive the message
         log.info("Receiving message");
         System.out.println(tagID);
 
+        // ToDo this is weird, why does tag matter?
         var request = worker.receiveTagged(buffer, Tag.of(tagID), new RequestParameters()
                 .setReceiveCallback(barrier::release));
 
@@ -191,23 +200,26 @@ public class InfinimumDBServer {
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
-        System.out.println("2");
         Requests.release(request);
 
-        String operationName =
-                SerializationUtils.deserialize(buffer.toArray(ValueLayout.JAVA_BYTE));
-        log.info("Received \"{}\"", operationName);
-        switch (operationName) {
-            case "PUT" -> {
-                log.info("Start PUT operation");
-                putOperation(worker, endpoint);
-            }
-            default -> {
-            }
+        return buffer.toArray(ValueLayout.JAVA_BYTE);
+    }
+
+    private static String bytesToHex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder();
+        for (byte b : bytes) {
+            sb.append(String.format("%02x", b));
         }
+        return sb.toString();
     }
 
     private void putOperation(Worker worker, Endpoint endpoint) {
+        byte[] id = receiveData(worker, scope, 16, 0);
+        log.info("Received \"{}\"", bytesToHex(id));
+        System.out.println(bytesToHex(id));
+
+        byte[] fullID = ArrayUtils.addAll(id, new byte[4]);
+
         // Allocate a memory descriptor
         var descriptor = new MemoryDescriptor();
 
@@ -261,18 +273,19 @@ public class InfinimumDBServer {
         }
 
         byte[] object = targetBuffer.toArray(ValueLayout.JAVA_BYTE);
-        byte[] objectID = generateUUID(object);
-        ByteBuffer byteBuffer = plasmaClient.create(objectID, object.length, new byte[0]);
+        ByteBuffer byteBuffer = plasmaClient.create(fullID, object.length, new byte[0]);
 
         log.info("Created new ByteBuffer in plasma store");
 
         for (byte b : object) {
             byteBuffer.put(b);
         }
-        plasmaClient.seal(objectID);
+        plasmaClient.seal(fullID);
 
         log.info("Sealed new object in plasma store");
 
         Requests.release(request);
+
+        log.info("Put operation completed");
     }
 }
