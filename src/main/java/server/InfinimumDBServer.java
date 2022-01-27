@@ -16,9 +16,12 @@ import org.apache.commons.lang3.SerializationUtils;
 
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+
+import static server.CommunicationUtils.*;
 
 @Slf4j
 public class InfinimumDBServer {
@@ -167,7 +170,7 @@ public class InfinimumDBServer {
             var endpointParameters = new EndpointParameters()
                     .setConnectionRequest(connectionRequest.get());
             Endpoint endpoint = this.worker.createEndpoint(endpointParameters);
-            String operationName = SerializationUtils.deserialize(receiveData(worker, scope, OPERATION_MESSAGE_SIZE, tagID));
+            String operationName = SerializationUtils.deserialize(receiveData(OPERATION_MESSAGE_SIZE, tagID, worker, barrier, scope));
 
             log.info("Received \"{}\"", operationName);
             switch (operationName) {
@@ -184,27 +187,6 @@ public class InfinimumDBServer {
         }
     }
 
-    private byte[] receiveData(Worker worker, ResourceScope scope, int size, long tagID) {
-        var buffer = MemorySegment.allocateNative(size, scope);
-
-        // Receive the message
-        log.info("Receiving message");
-        System.out.println(tagID);
-
-        // ToDo this is weird, why does tag matter?
-        var request = worker.receiveTagged(buffer, Tag.of(tagID), new RequestParameters()
-                .setReceiveCallback(barrier::release));
-
-        try {
-            Requests.await(worker, barrier);
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        }
-        Requests.release(request);
-
-        return buffer.toArray(ValueLayout.JAVA_BYTE);
-    }
-
     private static String bytesToHex(byte[] bytes) {
         StringBuilder sb = new StringBuilder();
         for (byte b : bytes) {
@@ -214,7 +196,7 @@ public class InfinimumDBServer {
     }
 
     private void putOperation(Worker worker, Endpoint endpoint) {
-        byte[] id = receiveData(worker, scope, 16, 0);
+        byte[] id = receiveData(16, 0, worker, barrier, scope);
         log.info("Received \"{}\"", bytesToHex(id));
         System.out.println(bytesToHex(id));
 
@@ -262,16 +244,6 @@ public class InfinimumDBServer {
 
         log.info("Read \"{}\" from remote buffer", SerializationUtils.deserialize(targetBuffer.toArray(ValueLayout.JAVA_BYTE)).toString());
 
-        // Signal completion
-        final var completion = MemorySegment.allocateNative(Byte.BYTES, scope);
-        request = endpoint.sendTagged(completion, Tag.of(0L));
-
-        try {
-            Requests.await(worker, request);
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        }
-
         byte[] object = targetBuffer.toArray(ValueLayout.JAVA_BYTE);
         try {
             ByteBuffer byteBuffer = plasmaClient.create(fullID, object.length, new byte[0]);
@@ -285,7 +257,11 @@ public class InfinimumDBServer {
             log.warn(e.getMessage());
         }
 
-        Requests.release(request);
+        ArrayList<Long> requests = new ArrayList<>();
+        requests.add(prepareToSendData(SerializationUtils.serialize("200"), endpoint, barrier, scope));
+        requests.add(prepareToSendData(SerializationUtils.serialize(this.serverID), endpoint, barrier, scope));
+
+        //sendData(requests, worker, barrier);
 
         log.info("Put operation completed");
     }
