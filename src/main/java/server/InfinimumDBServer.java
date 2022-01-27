@@ -273,16 +273,17 @@ public class InfinimumDBServer {
         }
 
         byte[] object = targetBuffer.toArray(ValueLayout.JAVA_BYTE);
-        ByteBuffer byteBuffer = plasmaClient.create(fullID, object.length, new byte[0]);
-
-        log.info("Created new ByteBuffer in plasma store");
-
-        for (byte b : object) {
-            byteBuffer.put(b);
+        try {
+            ByteBuffer byteBuffer = plasmaClient.create(fullID, object.length, new byte[0]);
+            log.info("Created new ByteBuffer in plasma store");
+            for (byte b : object) {
+                byteBuffer.put(b);
+            }
+            plasmaClient.seal(fullID);
+            log.info("Sealed new object in plasma store");
+        } catch (DuplicateObjectException e) {
+            log.warn(e.getMessage());
         }
-        plasmaClient.seal(fullID);
-
-        log.info("Sealed new object in plasma store");
 
         Requests.release(request);
 
