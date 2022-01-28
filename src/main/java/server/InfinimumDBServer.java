@@ -12,12 +12,12 @@ import org.apache.arrow.plasma.exceptions.DuplicateObjectException;
 import org.apache.arrow.plasma.exceptions.PlasmaOutOfMemoryException;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.SerializationUtils;
+import org.apache.commons.lang3.tuple.Pair;
 
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static server.CommunicationUtils.*;
@@ -26,30 +26,26 @@ import static server.CommunicationUtils.*;
 public class InfinimumDBServer {
 
     private static final int OPERATION_MESSAGE_SIZE = 10;
-    final int serverID = 0;
-    int serverCount = 1;
+    final transient int serverID = 0;
+    transient int serverCount = 1;
 
-    private PlasmaClient plasmaClient;
-    private final String plasmaFilePath;
+    private transient PlasmaClient plasmaClient;
+    private transient final String plasmaFilePath;
 
-    private final ResourcePool resources = new ResourcePool();
-    protected final ResourceScope scope = ResourceScope.newSharedScope();
+    private transient final ResourcePool resources = new ResourcePool();
+    protected transient final ResourceScope scope = ResourceScope.newSharedScope();
     private static final long DEFAULT_REQUEST_SIZE = 1024;
     private static final ContextParameters.Feature[] FEATURE_SET = {
             ContextParameters.Feature.TAG, ContextParameters.Feature.RMA, ContextParameters.Feature.WAKEUP, ContextParameters.Feature.AM,
             ContextParameters.Feature.ATOMIC_32, ContextParameters.Feature.ATOMIC_64, ContextParameters.Feature.STREAM
     };
-    private Worker worker;
-    private final InetSocketAddress listenAddress;
-    private Endpoint endpoint;
-    private Context context;
-    private final CommunicationBarrier barrier = new CommunicationBarrier();
+    private transient Worker worker;
+    private transient final InetSocketAddress listenAddress;
 
     public InfinimumDBServer(String plasmaFilePath, String listenAddress, Integer listenPort) {
         this.listenAddress = new InetSocketAddress(listenAddress, listenPort);
         this.plasmaFilePath = plasmaFilePath;
         connectPlasma();
-        listen();
     }
 
     /*public InfinimumDBServer(String plasmaFilePath, String listenAddress, Integer listeningPort,
@@ -65,18 +61,7 @@ public class InfinimumDBServer {
         try {
             this.plasmaClient = new PlasmaClient(plasmaFilePath, "", 0);
         } catch (Exception e) {
-            System.err.println("PlasmaDB could not be reached");
-        }
-    }
-
-    public void put(byte[] id, byte[] object) {
-        try {
-            this.plasmaClient.put(id, object, new byte[0]);
-        } catch (DuplicateObjectException e) {
-            this.plasmaClient.delete(id);
-            this.put(id, object);
-        } catch (Exception e) {
-            System.err.println(e.getMessage());
+            if (log.isErrorEnabled()) log.error("PlasmaDB could not be reached");
         }
     }
 
@@ -84,17 +69,11 @@ public class InfinimumDBServer {
         try {
             return this.plasmaClient.get(uuid, 100, false);
         } catch (Exception e) {
-            System.err.println(e.getMessage());
+            if (log.isErrorEnabled()) {
+                log.error(e.getMessage());
+            }
         }
         return new byte[0];
-    }
-
-    public byte[] generateUUID(byte[] object) {
-        UUID uuidOfObject = UUID.nameUUIDFromBytes(object);
-        ByteBuffer bb = ByteBuffer.wrap(new byte[20]);
-        bb.putLong(uuidOfObject.getMostSignificantBits());
-        bb.putLong(uuidOfObject.getLeastSignificantBits());
-        return bb.array();
     }
 
     public boolean isThisServerResponsible(byte[] object) {
@@ -104,7 +83,9 @@ public class InfinimumDBServer {
 
     public void listen() {
         NativeLogger.enable();
-        log.info("Using UCX version {}", Context.getVersion());
+        if (log.isInfoEnabled()) {
+            log.info("Using UCX version {}", Context.getVersion());
+        }
         try (resources) {
             initialize();
             listenLoop();
@@ -133,7 +114,7 @@ public class InfinimumDBServer {
         log.info("Initializing context");
 
         // Initialize UCP context
-        this.context = pushResource(
+        Context context = pushResource(
                 Context.initialize(contextParameters, configuration)
         );
 
@@ -162,14 +143,14 @@ public class InfinimumDBServer {
         log.info("Listening for new connection requests on {}", listenAddress);
         pushResource(this.worker.createListener(listenerParams));
 
-        long tagID = 0;
         while (true) {
             Requests.await(this.worker, connectionRequest);
 
             var endpointParameters = new EndpointParameters()
                     .setConnectionRequest(connectionRequest.get());
+            // ToDo create worker pool and create endpoint from free worker
             Endpoint endpoint = this.worker.createEndpoint(endpointParameters);
-            String operationName = SerializationUtils.deserialize(receiveData(OPERATION_MESSAGE_SIZE, tagID, worker, barrier, scope));
+            String operationName = SerializationUtils.deserialize(receiveData(OPERATION_MESSAGE_SIZE, 0L, worker, scope));
 
             log.info("Received \"{}\"", operationName);
             switch (operationName) {
@@ -180,9 +161,8 @@ public class InfinimumDBServer {
                 default -> {
                 }
             }
-
+            endpoint.close();
             connectionRequest.set(null);
-            tagID++;
         }
     }
 
@@ -195,34 +175,37 @@ public class InfinimumDBServer {
     }
 
     private void putOperation(Worker worker, Endpoint endpoint) {
-        byte[] id = receiveData(16, 0, worker, barrier, scope);
-        log.info("Received \"{}\"", bytesToHex(id));
+        final byte[] id = receiveData(16, 0, worker, scope);
+        if (log.isInfoEnabled()) {
+            log.info("Received \"{}\"", bytesToHex(id));
+        }
+        final byte[] fullID = ArrayUtils.addAll(id, new byte[4]);
 
-        byte[] fullID = ArrayUtils.addAll(id, new byte[4]);
+        final MemoryDescriptor descriptor = receiveMemoryDescriptor(0L, worker);
+        final byte[] remoteObject = receiveRemoteObject(descriptor, endpoint, worker, scope, resources);
 
-        MemoryDescriptor descriptor = receiveMemoryDescriptor(0L, worker, barrier);
-        byte[] remoteObject = receiveRemoteObject(descriptor, endpoint, worker, barrier, scope, resources);
-
-        log.info("Read \"{}\" from remote buffer", SerializationUtils.deserialize(remoteObject).toString());
-
+        if (log.isInfoEnabled()) {
+            log.info("Read \"{}\" from remote buffer", SerializationUtils.deserialize(remoteObject).toString());
+        }
         try {
             saveObjectToPlasma(fullID, remoteObject);
         } catch (DuplicateObjectException e) {
-            log.warn(e.getMessage());
+            if (log.isWarnEnabled()) {
+                log.warn(e.getMessage());
+            }
         }
 
-        ArrayList<Long> requests = new ArrayList<>();
-        requests.add(prepareToSendData(SerializationUtils.serialize("200"), endpoint, barrier, scope));
-        requests.add(prepareToSendData(SerializationUtils.serialize(this.serverID), endpoint, barrier, scope));
-
-        //sendData(requests, worker, barrier);
+        ArrayList<Pair<Long, CommunicationBarrier>> requests = new ArrayList<>();
+        requests.add(prepareToSendData(SerializationUtils.serialize("200"), 0L, endpoint, scope));
+        requests.add(prepareToSendData(SerializationUtils.serialize(this.serverID), 0L, endpoint, scope));
+        sendData(requests, worker);
 
         log.info("Put operation completed");
     }
 
     private void saveObjectToPlasma(byte[] fullID, byte[] remoteObject) throws DuplicateObjectException, PlasmaOutOfMemoryException {
         ByteBuffer byteBuffer = plasmaClient.create(fullID, remoteObject.length, new byte[0]);
-        log.info("Created new ByteBuffer in plasma store");
+        if (log.isInfoEnabled()) log.info("Created new ByteBuffer in plasma store");
         for (byte b : remoteObject) {
             byteBuffer.put(b);
         }

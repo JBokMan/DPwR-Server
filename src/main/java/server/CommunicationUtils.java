@@ -9,6 +9,7 @@ import jdk.incubator.foreign.ResourceScope;
 import jdk.incubator.foreign.ValueLayout;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.SerializationUtils;
+import org.apache.commons.lang3.tuple.Pair;
 
 import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
@@ -21,10 +22,12 @@ public class CommunicationUtils {
 
     public static byte[] getMD5Hash(final String text) {
         try {
-            final MessageDigest md = MessageDigest.getInstance("MD5");
-            return md.digest(text.getBytes(StandardCharsets.UTF_8));
+            final MessageDigest messageDigest = MessageDigest.getInstance("MD5");
+            return messageDigest.digest(text.getBytes(StandardCharsets.UTF_8));
         } catch (NoSuchAlgorithmException e) {
-            log.error(e.getMessage());
+            if (log.isErrorEnabled()) {
+                log.error(e.getMessage());
+            }
             return new byte[0];
         }
     }
@@ -36,122 +39,134 @@ public class CommunicationUtils {
             memoryRegion.segment().copyFrom(source);
             return memoryRegion.descriptor();
         } catch (ControlException e) {
-            log.error(e.getMessage());
+            if (log.isErrorEnabled()) {
+                log.error(e.getMessage());
+            }
             return null;
         }
     }
 
-    public static long prepareToSendData(final byte[] data, final Endpoint endpoint, final CommunicationBarrier barrier, final ResourceScope scope) {
-        log.info("Prepare to send data");
+    public static Pair<Long, CommunicationBarrier> prepareToSendData(final byte[] data, final long tagID, final Endpoint endpoint, final ResourceScope scope) {
+        final CommunicationBarrier barrier = new CommunicationBarrier();
+        if (log.isInfoEnabled()) {
+            log.info("Prepare to send data");
+        }
         final int dataSize = data.length;
 
         final MemorySegment source = MemorySegment.ofArray(data);
         final MemorySegment buffer = MemorySegment.allocateNative(dataSize, scope);
         buffer.copyFrom(source);
 
-        return endpoint.sendTagged(buffer, Tag.of(0L), new RequestParameters()
-                .setSendCallback(barrier::release));
+        return Pair.of(endpoint.sendTagged(buffer, Tag.of(tagID), new RequestParameters()
+                .setSendCallback(barrier::release)), barrier);
     }
 
-    public static long prepareToSendRemoteKey(final MemoryDescriptor descriptor, final Endpoint endpoint, final CommunicationBarrier barrier) {
+    public static Pair<Long, CommunicationBarrier> prepareToSendRemoteKey(final MemoryDescriptor descriptor, final Endpoint endpoint) {
+        final CommunicationBarrier barrier = new CommunicationBarrier();
         log.info("Prepare to send remote key");
-        return endpoint.sendTagged(descriptor, Tag.of(0L), new RequestParameters().setSendCallback(barrier::release));
+        return Pair.of(endpoint.sendTagged(descriptor, Tag.of(0L), new RequestParameters().setSendCallback(barrier::release)), barrier);
     }
 
-    public static void sendData(final List<Long> requests, final Worker worker, final CommunicationBarrier barrier) {
-        log.info("Sending data");
-        try {
-            Requests.await(worker, barrier);
-        } catch (InterruptedException e) {
-            log.error(e.getMessage());
-        } finally {
-            for (long request : requests) {
-                Requests.release(request);
+    public static void sendData(final List<Pair<Long, CommunicationBarrier>> requests, final Worker worker) {
+        if (log.isInfoEnabled()) {
+            log.info("Sending data");
+        }
+        for (final Pair<Long, CommunicationBarrier> request : requests) {
+            if (!Status.is(request.getLeft(), Status.OK)) {
+                try {
+                    Requests.await(worker, request.getRight());
+                } catch (InterruptedException e) {
+                    if (log.isErrorEnabled()) {
+                        log.error(e.getMessage());
+                    }
+                } finally {
+                    Requests.release(request.getLeft());
+                }
             }
         }
     }
 
-    public static void sendData(final long request, final Worker worker, final CommunicationBarrier barrier) {
-        log.info("Sending data");
-        try {
-            Requests.await(worker, barrier);
-        } catch (InterruptedException e) {
-            log.error(e.getMessage());
-        } finally {
-            Requests.release(request);
+    public static byte[] receiveData(final int size, final long tagID, final Worker worker, final ResourceScope scope) {
+        final CommunicationBarrier barrier = new CommunicationBarrier();
+        final MemorySegment buffer = MemorySegment.allocateNative(size, scope);
+
+        if (log.isInfoEnabled()) {
+            log.info("Receiving message");
         }
-    }
 
-    public static byte[] receiveData(final int size, final long tagID, final Worker worker, final CommunicationBarrier barrier, final ResourceScope scope) {
-        MemorySegment buffer = MemorySegment.allocateNative(size, scope);
-
-        log.info("Receiving message");
-
-        // ToDo this is weird, why does tag matter?
         long request = worker.receiveTagged(buffer, Tag.of(tagID), new RequestParameters()
                 .setReceiveCallback(barrier::release));
 
-        try {
-            Requests.await(worker, barrier);
-        } catch (InterruptedException e) {
-            log.error(e.getMessage());
-        } finally {
-            Requests.release(request);
-        }
+        awaitRequestIfNecessary(request, worker, barrier);
 
         return buffer.toArray(ValueLayout.JAVA_BYTE);
     }
 
-    public static MemoryDescriptor receiveMemoryDescriptor(final long tagID, final Worker worker, final CommunicationBarrier barrier) {
-        var descriptor = new MemoryDescriptor();
+    public static MemoryDescriptor receiveMemoryDescriptor(final long tagID, final Worker worker) {
+        final CommunicationBarrier barrier = new CommunicationBarrier();
+        final MemoryDescriptor descriptor = new MemoryDescriptor();
 
-        log.info("Receiving Remote Key");
+        if (log.isInfoEnabled()) {
+            log.info("Receiving Remote Key");
+        }
 
-        var request = worker.receiveTagged(descriptor, Tag.of(tagID), new RequestParameters()
+        final long request = worker.receiveTagged(descriptor, Tag.of(tagID), new RequestParameters()
                 .setReceiveCallback(barrier::release));
 
-        try {
-            Requests.await(worker, barrier);
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        }
-        Requests.release(request);
+        awaitRequestIfNecessary(request, worker, barrier);
 
         return descriptor;
     }
 
-    public static byte[] receiveRemoteObject(final MemoryDescriptor descriptor, final Endpoint endpoint, final Worker worker, final CommunicationBarrier barrier, final ResourceScope scope, final ResourcePool resourcePool) {
-        RemoteKey remoteKey = null;
+    @SuppressWarnings("PMD.DataflowAnomalyAnalysis")
+    public static byte[] receiveRemoteObject(final MemoryDescriptor descriptor, final Endpoint endpoint, final Worker worker, final ResourceScope scope, final ResourcePool resourcePool) {
+        final CommunicationBarrier barrier = new CommunicationBarrier();
+        RemoteKey remoteKey;
         try {
             remoteKey = endpoint.unpack(descriptor);
         } catch (ControlException e) {
-            e.printStackTrace();
-        }
-        if (remoteKey == null) {
-            log.error("Remote key was null");
+            if (log.isErrorEnabled()) {
+                log.error(e.getMessage());
+            }
             return new byte[0];
         }
-        var targetBuffer = MemorySegment.allocateNative(descriptor.remoteSize(), scope);
+        final MemorySegment targetBuffer = MemorySegment.allocateNative(descriptor.remoteSize(), scope);
         resourcePool.push(remoteKey);
 
-        long request = endpoint.get(targetBuffer, descriptor.remoteAddress(), remoteKey, new RequestParameters()
+        final long request = endpoint.get(targetBuffer, descriptor.remoteAddress(), remoteKey, new RequestParameters()
                 .setReceiveCallback(barrier::release));
 
-        try {
-            Requests.await(worker, barrier);
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        }
-        Requests.release(request);
+        awaitRequestIfNecessary(request, worker, barrier);
 
         return targetBuffer.toArray(ValueLayout.JAVA_BYTE);
+    }
+
+    private static void awaitRequestIfNecessary(long request, Worker worker, CommunicationBarrier barrier) {
+        if (!Status.isError(request)) {
+            if (!Status.is(request, Status.BUSY)) {
+                log.error("Error Status");
+            }
+        }
+        if (!Status.is(request, Status.OK)) {
+            try {
+                Requests.await(worker, barrier);
+            } catch (InterruptedException e) {
+                if (log.isErrorEnabled()) {
+                    log.error(e.getMessage());
+                }
+            } finally {
+                Requests.release(request);
+            }
+        }
     }
 
     public static byte[] serializeObject(final Object object) {
         try {
             return SerializationUtils.serialize((Serializable) object);
         } catch (Exception e) {
-            log.warn(e.getMessage());
+            if (log.isWarnEnabled()) {
+                log.warn(e.getMessage());
+            }
             return new byte[0];
         }
     }
