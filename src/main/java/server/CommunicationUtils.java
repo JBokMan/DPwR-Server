@@ -3,6 +3,7 @@ package server;
 import de.hhu.bsinfo.infinileap.binding.*;
 import de.hhu.bsinfo.infinileap.example.util.CommunicationBarrier;
 import de.hhu.bsinfo.infinileap.example.util.Requests;
+import de.hhu.bsinfo.infinileap.util.ResourcePool;
 import jdk.incubator.foreign.MemorySegment;
 import jdk.incubator.foreign.ResourceScope;
 import jdk.incubator.foreign.ValueLayout;
@@ -99,6 +100,51 @@ public class CommunicationUtils {
         }
 
         return buffer.toArray(ValueLayout.JAVA_BYTE);
+    }
+
+    public static MemoryDescriptor receiveMemoryDescriptor(final long tagID, final Worker worker, final CommunicationBarrier barrier) {
+        var descriptor = new MemoryDescriptor();
+
+        log.info("Receiving Remote Key");
+
+        var request = worker.receiveTagged(descriptor, Tag.of(tagID), new RequestParameters()
+                .setReceiveCallback(barrier::release));
+
+        try {
+            Requests.await(worker, barrier);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        Requests.release(request);
+
+        return descriptor;
+    }
+
+    public static byte[] receiveRemoteObject(final MemoryDescriptor descriptor, final Endpoint endpoint, final Worker worker, final CommunicationBarrier barrier, final ResourceScope scope, final ResourcePool resourcePool) {
+        RemoteKey remoteKey = null;
+        try {
+            remoteKey = endpoint.unpack(descriptor);
+        } catch (ControlException e) {
+            e.printStackTrace();
+        }
+        if (remoteKey == null) {
+            log.error("Remote key was null");
+            return new byte[0];
+        }
+        var targetBuffer = MemorySegment.allocateNative(descriptor.remoteSize(), scope);
+        resourcePool.push(remoteKey);
+
+        long request = endpoint.get(targetBuffer, descriptor.remoteAddress(), remoteKey, new RequestParameters()
+                .setReceiveCallback(barrier::release));
+
+        try {
+            Requests.await(worker, barrier);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        Requests.release(request);
+
+        return targetBuffer.toArray(ValueLayout.JAVA_BYTE);
     }
 
     public static byte[] serializeObject(final Object object) {

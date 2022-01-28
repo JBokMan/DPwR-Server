@@ -5,12 +5,11 @@ import de.hhu.bsinfo.infinileap.example.util.CommunicationBarrier;
 import de.hhu.bsinfo.infinileap.example.util.Requests;
 import de.hhu.bsinfo.infinileap.util.CloseException;
 import de.hhu.bsinfo.infinileap.util.ResourcePool;
-import jdk.incubator.foreign.MemorySegment;
 import jdk.incubator.foreign.ResourceScope;
-import jdk.incubator.foreign.ValueLayout;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.arrow.plasma.exceptions.DuplicateObjectException;
+import org.apache.arrow.plasma.exceptions.PlasmaOutOfMemoryException;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.SerializationUtils;
 
@@ -198,61 +197,16 @@ public class InfinimumDBServer {
     private void putOperation(Worker worker, Endpoint endpoint) {
         byte[] id = receiveData(16, 0, worker, barrier, scope);
         log.info("Received \"{}\"", bytesToHex(id));
-        System.out.println(bytesToHex(id));
 
         byte[] fullID = ArrayUtils.addAll(id, new byte[4]);
 
-        // Allocate a memory descriptor
-        var descriptor = new MemoryDescriptor();
+        MemoryDescriptor descriptor = receiveMemoryDescriptor(0L, worker, barrier);
+        byte[] remoteObject = receiveRemoteObject(descriptor, endpoint, worker, barrier, scope, resources);
 
-        // Receive the message
-        log.info("Receiving Remote Key");
-
-        var request = worker.receiveTagged(descriptor, Tag.of(0L), new RequestParameters()
-                .setReceiveCallback(barrier::release));
+        log.info("Read \"{}\" from remote buffer", SerializationUtils.deserialize(remoteObject).toString());
 
         try {
-            Requests.await(worker, barrier);
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        }
-        Requests.release(request);
-
-        // Read remote memory
-        RemoteKey remoteKey = null;
-        try {
-            remoteKey = endpoint.unpack(descriptor);
-        } catch (ControlException e) {
-            e.printStackTrace();
-        }
-        if (remoteKey == null) {
-            log.error("Remote key was null");
-            return;
-        }
-        var targetBuffer = MemorySegment.allocateNative(descriptor.remoteSize(), scope);
-        pushResource(remoteKey);
-
-        request = endpoint.get(targetBuffer, descriptor.remoteAddress(), remoteKey, new RequestParameters()
-                .setReceiveCallback(barrier::release));
-
-        try {
-            Requests.await(worker, barrier);
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        }
-        Requests.release(request);
-
-        log.info("Read \"{}\" from remote buffer", SerializationUtils.deserialize(targetBuffer.toArray(ValueLayout.JAVA_BYTE)).toString());
-
-        byte[] object = targetBuffer.toArray(ValueLayout.JAVA_BYTE);
-        try {
-            ByteBuffer byteBuffer = plasmaClient.create(fullID, object.length, new byte[0]);
-            log.info("Created new ByteBuffer in plasma store");
-            for (byte b : object) {
-                byteBuffer.put(b);
-            }
-            plasmaClient.seal(fullID);
-            log.info("Sealed new object in plasma store");
+            saveObjectToPlasma(fullID, remoteObject);
         } catch (DuplicateObjectException e) {
             log.warn(e.getMessage());
         }
@@ -264,5 +218,15 @@ public class InfinimumDBServer {
         //sendData(requests, worker, barrier);
 
         log.info("Put operation completed");
+    }
+
+    private void saveObjectToPlasma(byte[] fullID, byte[] remoteObject) throws DuplicateObjectException, PlasmaOutOfMemoryException {
+        ByteBuffer byteBuffer = plasmaClient.create(fullID, remoteObject.length, new byte[0]);
+        log.info("Created new ByteBuffer in plasma store");
+        for (byte b : remoteObject) {
+            byteBuffer.put(b);
+        }
+        plasmaClient.seal(fullID);
+        log.info("Sealed new object in plasma store");
     }
 }
