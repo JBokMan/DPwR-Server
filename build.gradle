@@ -10,9 +10,9 @@ plugins {
 
 pmd {
     consoleOutput = true
-    toolVersion = "6.41.0"
+    toolVersion = "6.9.0"
     rulesMinimumPriority = 5
-    ruleSets = ["category/java/errorprone.xml", "category/java/bestpractices.xml"]
+    ruleSets = ["category/java/errorprone.xml", "category/java/bestpractices.xml", "category/java/codestyle.xml"]
 }
 
 application {
