@@ -1,7 +1,6 @@
 package server;
 
 import de.hhu.bsinfo.infinileap.binding.*;
-import de.hhu.bsinfo.infinileap.example.util.CommunicationBarrier;
 import de.hhu.bsinfo.infinileap.example.util.Requests;
 import de.hhu.bsinfo.infinileap.util.CloseException;
 import de.hhu.bsinfo.infinileap.util.ResourcePool;
@@ -12,7 +11,6 @@ import org.apache.arrow.plasma.exceptions.DuplicateObjectException;
 import org.apache.arrow.plasma.exceptions.PlasmaOutOfMemoryException;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.SerializationUtils;
-import org.apache.commons.lang3.tuple.Pair;
 
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
@@ -127,6 +125,20 @@ public class InfinimumDBServer {
         this.worker = pushResource(
                 context.createWorker(workerParameters)
         );
+
+        Thread cleanUpThread = new Thread(() -> {
+            if (log.isWarnEnabled()) {
+                log.warn("Cleanup");
+            }
+            try {
+                resources.close();
+            } catch (CloseException e) {
+                if (log.isErrorEnabled()) {
+                    log.error("Exception while cleaning up");
+                }
+            }
+        });
+        Runtime.getRuntime().addShutdownHook(cleanUpThread);
     }
 
     protected <T extends AutoCloseable> T pushResource(T resource) {
