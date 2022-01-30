@@ -35,6 +35,11 @@
 9. run ```sudo make VERBOSE=1 -j4; sudo make install```
 10. run ```sudo cp -a release/. /usr/lib```
 
+## How to gracefully shut down the server
+
+1. Find the PID with for example ```ps -A | grep java```
+2. Run ```kill -s TERM <PID>``` where \<PID\> should be replaced with the correct PID
+
 ## Known Bugs/Problems:
 **Problem:** 
 Following error message appears when starting a server:
