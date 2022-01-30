@@ -9,7 +9,6 @@ import jdk.incubator.foreign.ResourceScope;
 import jdk.incubator.foreign.ValueLayout;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.SerializationUtils;
-import org.apache.commons.lang3.tuple.Pair;
 
 import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
@@ -46,8 +45,7 @@ public class CommunicationUtils {
         }
     }
 
-    public static Pair<Long, CommunicationBarrier> prepareToSendData(final byte[] data, final long tagID, final Endpoint endpoint, final ResourceScope scope) {
-        final CommunicationBarrier barrier = new CommunicationBarrier();
+    public static Long prepareToSendData(final byte[] data, final long tagID, final Endpoint endpoint, final ResourceScope scope) {
         if (log.isInfoEnabled()) {
             log.info("Prepare to send data");
         }
@@ -57,32 +55,20 @@ public class CommunicationUtils {
         final MemorySegment buffer = MemorySegment.allocateNative(dataSize, scope);
         buffer.copyFrom(source);
 
-        return Pair.of(endpoint.sendTagged(buffer, Tag.of(tagID), new RequestParameters()
-                .setSendCallback(barrier::release)), barrier);
+        return endpoint.sendTagged(buffer, Tag.of(tagID), new RequestParameters());
     }
 
-    public static Pair<Long, CommunicationBarrier> prepareToSendRemoteKey(final MemoryDescriptor descriptor, final Endpoint endpoint) {
-        final CommunicationBarrier barrier = new CommunicationBarrier();
+    public static Long prepareToSendRemoteKey(final MemoryDescriptor descriptor, final Endpoint endpoint) {
         log.info("Prepare to send remote key");
-        return Pair.of(endpoint.sendTagged(descriptor, Tag.of(0L), new RequestParameters().setSendCallback(barrier::release)), barrier);
+        return endpoint.sendTagged(descriptor, Tag.of(0L));
     }
 
-    public static void sendData(final List<Pair<Long, CommunicationBarrier>> requests, final Worker worker) {
+    public static void sendData(final List<Long> requests, final Worker worker) {
         if (log.isInfoEnabled()) {
             log.info("Sending data");
         }
-        for (final Pair<Long, CommunicationBarrier> request : requests) {
-            if (!Status.is(request.getLeft(), Status.OK)) {
-                try {
-                    Requests.await(worker, request.getRight());
-                } catch (InterruptedException e) {
-                    if (log.isErrorEnabled()) {
-                        log.error(e.getMessage());
-                    }
-                } finally {
-                    Requests.release(request.getLeft());
-                }
-            }
+        for (final Long request : requests) {
+            Requests.poll(worker, request);
         }
     }
 

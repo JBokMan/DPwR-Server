@@ -195,7 +195,7 @@ public class InfinimumDBServer {
             }
         }
 
-        ArrayList<Pair<Long, CommunicationBarrier>> requests = new ArrayList<>();
+        ArrayList<Long> requests = new ArrayList<>();
         requests.add(prepareToSendData(SerializationUtils.serialize("200"), 0L, endpoint, scope));
         requests.add(prepareToSendData(SerializationUtils.serialize(this.serverID), 0L, endpoint, scope));
         sendData(requests, worker);
