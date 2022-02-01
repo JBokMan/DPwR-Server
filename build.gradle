@@ -16,7 +16,7 @@ pmd {
 }
 
 application {
-    mainClass = 'App'
+    mainClass = 'main/Application'
 }
 
 java {
