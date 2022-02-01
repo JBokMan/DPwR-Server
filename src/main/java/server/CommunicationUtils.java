@@ -111,8 +111,8 @@ public class CommunicationUtils {
 
     private static void awaitRequestIfNecessary(final long request, final Worker worker, final CommunicationBarrier barrier) {
         if (!Status.isError(request)) {
-            if (!Status.is(request, Status.BUSY)) {
-                log.error("Error Status");
+            if (log.isWarnEnabled()) {
+                log.warn("A request has an error status");
             }
         }
         if (!Status.is(request, Status.OK)) {
