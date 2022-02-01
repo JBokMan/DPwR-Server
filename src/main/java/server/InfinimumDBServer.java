@@ -146,7 +146,7 @@ public class InfinimumDBServer {
         return resource;
     }
 
-    private void listenLoop() throws ControlException, InterruptedException {
+    private void listenLoop() throws InterruptedException, ControlException {
         var connectionRequest = new AtomicReference<ConnectionRequest>();
         var listenerParams = new ListenerParameters()
                 .setListenAddress(listenAddress)
@@ -161,19 +161,31 @@ public class InfinimumDBServer {
             var endpointParameters = new EndpointParameters()
                     .setConnectionRequest(connectionRequest.get());
             // ToDo create worker pool and create endpoint from free worker
-            Endpoint endpoint = this.worker.createEndpoint(endpointParameters);
+            Endpoint endpoint = null;
+            try {
+                endpoint = this.worker.createEndpoint(endpointParameters);
+            } catch (ControlException e) {
+                if (log.isErrorEnabled()) {
+                    log.error("An exception occurred while creating an endpoint.", e);
+                }
+            }
             String operationName = SerializationUtils.deserialize(receiveData(OPERATION_MESSAGE_SIZE, 0L, worker, scope));
 
             log.info("Received \"{}\"", operationName);
             switch (operationName) {
                 case "PUT" -> {
                     log.info("Start PUT operation");
-                    putOperation(worker, endpoint);
+                    try {
+                        putOperation(worker, endpoint);
+                    } catch (ControlException e) {
+                        if (log.isErrorEnabled()) {
+                            log.error("An exception occurred while receiving the remote key in a PUT operation.", e);
+                        }
+                    }
                 }
                 default -> {
                 }
             }
-            endpoint.close();
             connectionRequest.set(null);
         }
     }
@@ -186,7 +198,7 @@ public class InfinimumDBServer {
         return sb.toString();
     }
 
-    private void putOperation(Worker worker, Endpoint endpoint) {
+    private void putOperation(Worker worker, Endpoint endpoint) throws ControlException {
         final byte[] id = receiveData(16, 0, worker, scope);
         if (log.isInfoEnabled()) {
             log.info("Received \"{}\"", bytesToHex(id));
@@ -212,6 +224,7 @@ public class InfinimumDBServer {
         requests.add(prepareToSendData(SerializationUtils.serialize(this.serverID), 0L, endpoint, scope));
         sendData(requests, worker);
 
+        endpoint.close();
         log.info("Put operation completed");
     }
 

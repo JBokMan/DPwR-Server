@@ -8,6 +8,7 @@ import jdk.incubator.foreign.MemorySegment;
 import jdk.incubator.foreign.ResourceScope;
 import jdk.incubator.foreign.ValueLayout;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.SerializationException;
 import org.apache.commons.lang3.SerializationUtils;
 
 import java.io.Serializable;
@@ -19,30 +20,16 @@ import java.util.List;
 @Slf4j
 public class CommunicationUtils {
 
-    public static byte[] getMD5Hash(final String text) {
-        try {
-            final MessageDigest messageDigest = MessageDigest.getInstance("MD5");
-            return messageDigest.digest(text.getBytes(StandardCharsets.UTF_8));
-        } catch (NoSuchAlgorithmException e) {
-            if (log.isErrorEnabled()) {
-                log.error(e.getMessage());
-            }
-            return new byte[0];
-        }
+    public static byte[] getMD5Hash(final String text) throws NoSuchAlgorithmException {
+        final MessageDigest messageDigest = MessageDigest.getInstance("MD5");
+        return messageDigest.digest(text.getBytes(StandardCharsets.UTF_8));
     }
 
-    public static MemoryDescriptor getMemoryDescriptorOfBytes(final byte[] object, final Context context) {
+    public static MemoryDescriptor getMemoryDescriptorOfBytes(final byte[] object, final Context context) throws ControlException {
         final MemorySegment source = MemorySegment.ofArray(object);
-        try {
-            final MemoryRegion memoryRegion = context.allocateMemory(object.length);
-            memoryRegion.segment().copyFrom(source);
-            return memoryRegion.descriptor();
-        } catch (ControlException e) {
-            if (log.isErrorEnabled()) {
-                log.error(e.getMessage());
-            }
-            return null;
-        }
+        final MemoryRegion memoryRegion = context.allocateMemory(object.length);
+        memoryRegion.segment().copyFrom(source);
+        return memoryRegion.descriptor();
     }
 
     public static Long prepareToSendData(final byte[] data, final long tagID, final Endpoint endpoint, final ResourceScope scope) {
@@ -80,7 +67,7 @@ public class CommunicationUtils {
             log.info("Receiving message");
         }
 
-        long request = worker.receiveTagged(buffer, Tag.of(tagID), new RequestParameters()
+        final long request = worker.receiveTagged(buffer, Tag.of(tagID), new RequestParameters()
                 .setReceiveCallback(barrier::release));
 
         awaitRequestIfNecessary(request, worker, barrier);
@@ -105,17 +92,12 @@ public class CommunicationUtils {
     }
 
     @SuppressWarnings("PMD.DataflowAnomalyAnalysis")
-    public static byte[] receiveRemoteObject(final MemoryDescriptor descriptor, final Endpoint endpoint, final Worker worker, final ResourceScope scope, final ResourcePool resourcePool) {
+    public static byte[] receiveRemoteObject(final MemoryDescriptor descriptor, final Endpoint endpoint, final Worker worker, final ResourceScope scope, final ResourcePool resourcePool) throws ControlException {
         final CommunicationBarrier barrier = new CommunicationBarrier();
         RemoteKey remoteKey;
-        try {
-            remoteKey = endpoint.unpack(descriptor);
-        } catch (ControlException e) {
-            if (log.isErrorEnabled()) {
-                log.error(e.getMessage());
-            }
-            return new byte[0];
-        }
+
+        remoteKey = endpoint.unpack(descriptor);
+
         final MemorySegment targetBuffer = MemorySegment.allocateNative(descriptor.remoteSize(), scope);
         resourcePool.push(remoteKey);
 
@@ -127,7 +109,7 @@ public class CommunicationUtils {
         return targetBuffer.toArray(ValueLayout.JAVA_BYTE);
     }
 
-    private static void awaitRequestIfNecessary(long request, Worker worker, CommunicationBarrier barrier) {
+    private static void awaitRequestIfNecessary(final long request, final Worker worker, final CommunicationBarrier barrier) {
         if (!Status.isError(request)) {
             if (!Status.is(request, Status.BUSY)) {
                 log.error("Error Status");
@@ -146,14 +128,7 @@ public class CommunicationUtils {
         }
     }
 
-    public static byte[] serializeObject(final Object object) {
-        try {
-            return SerializationUtils.serialize((Serializable) object);
-        } catch (Exception e) {
-            if (log.isWarnEnabled()) {
-                log.warn(e.getMessage());
-            }
-            return new byte[0];
-        }
+    public static byte[] serializeObject(final Object object) throws SerializationException {
+        return SerializationUtils.serialize((Serializable) object);
     }
 }
