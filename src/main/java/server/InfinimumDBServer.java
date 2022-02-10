@@ -14,8 +14,10 @@ import org.apache.commons.lang3.SerializationUtils;
 
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static server.CommunicationUtils.*;
@@ -199,21 +201,41 @@ public class InfinimumDBServer {
     }
 
     private void putOperation(Worker worker, Endpoint endpoint) throws ControlException {
-        final byte[] id = receiveData(16, 0, worker, scope);
-        if (log.isInfoEnabled()) {
-            log.info("Received \"{}\"", bytesToHex(id));
-        }
-        final byte[] fullID = ArrayUtils.addAll(id, new byte[4]);
-
         final MemoryDescriptor descriptor = receiveMemoryDescriptor(0L, worker);
         final byte[] remoteObject = receiveRemoteObject(descriptor, endpoint, worker, scope, resources);
-
         if (log.isInfoEnabled()) {
             log.info("Read \"{}\" from remote buffer", SerializationUtils.deserialize(remoteObject).toString());
         }
+
+        final byte[] metadataSizeBytes = receiveData(Integer.BYTES, 0, worker, scope);
+        ByteBuffer byteBuffer = ByteBuffer.wrap(metadataSizeBytes);
+        int metadataSize = byteBuffer.getInt();
+        if (log.isInfoEnabled()) {
+            log.info("Received \"{}\"", metadataSize);
+        }
+        final byte[] metadataBytes = receiveData(metadataSize, 0L, worker, scope);
+        HashMap<String, String> metadata = SerializationUtils.deserialize(metadataBytes);
+        if (log.isInfoEnabled()) {
+            log.info("Received \"{}\"", metadata);
+        }
+
+        byte[] id = new byte[0];
         try {
-            saveObjectToPlasma(fullID, remoteObject);
+            id = getMD5Hash(metadata.get("key"));
+        } catch (NoSuchAlgorithmException e) {
+            if (log.isErrorEnabled()) {
+                log.error("The MD5 hash algorithm was not found.", e);
+            }
+        }
+        final byte[] fullID = ArrayUtils.addAll(id, new byte[4]);
+
+        // TODO check if this server is responsible for that object and delegate if not.
+
+        try {
+            saveObjectToPlasma(fullID, remoteObject, metadataBytes);
         } catch (DuplicateObjectException e) {
+            // TODO: check if hash collision occurred
+            byte[] plasmaMetadata = plasmaClient.get(fullID, 1000, true);
             if (log.isWarnEnabled()) {
                 log.warn(e.getMessage());
             }
@@ -228,13 +250,13 @@ public class InfinimumDBServer {
         log.info("Put operation completed");
     }
 
-    private void saveObjectToPlasma(byte[] fullID, byte[] remoteObject) throws DuplicateObjectException, PlasmaOutOfMemoryException {
-        ByteBuffer byteBuffer = plasmaClient.create(fullID, remoteObject.length, new byte[0]);
+    private void saveObjectToPlasma(byte[] id, byte[] object, byte[] metadata) throws DuplicateObjectException, PlasmaOutOfMemoryException {
+        ByteBuffer byteBuffer = plasmaClient.create(id, object.length, metadata);
         if (log.isInfoEnabled()) log.info("Created new ByteBuffer in plasma store");
-        for (byte b : remoteObject) {
+        for (byte b : object) {
             byteBuffer.put(b);
         }
-        plasmaClient.seal(fullID);
+        plasmaClient.seal(id);
         log.info("Sealed new object in plasma store");
     }
 }
