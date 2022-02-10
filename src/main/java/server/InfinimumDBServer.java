@@ -40,6 +40,7 @@ public class InfinimumDBServer {
             ContextParameters.Feature.ATOMIC_32, ContextParameters.Feature.ATOMIC_64, ContextParameters.Feature.STREAM
     };
     private transient Worker worker;
+    private transient Context context;
     private transient final InetSocketAddress listenAddress;
 
     public InfinimumDBServer(String plasmaFilePath, String listenAddress, Integer listenPort) {
@@ -63,17 +64,6 @@ public class InfinimumDBServer {
         } catch (Exception e) {
             if (log.isErrorEnabled()) log.error("PlasmaDB could not be reached");
         }
-    }
-
-    public byte[] get(byte[] uuid) {
-        try {
-            return this.plasmaClient.get(uuid, 100, false);
-        } catch (Exception e) {
-            if (log.isErrorEnabled()) {
-                log.error(e.getMessage());
-            }
-        }
-        return new byte[0];
     }
 
     public boolean isThisServerResponsible(byte[] object) {
@@ -114,7 +104,7 @@ public class InfinimumDBServer {
         log.info("Initializing context");
 
         // Initialize UCP context
-        Context context = pushResource(
+        this.context = pushResource(
                 Context.initialize(contextParameters, configuration)
         );
 
@@ -130,7 +120,7 @@ public class InfinimumDBServer {
 
         Thread cleanUpThread = new Thread(() -> {
             if (log.isWarnEnabled()) {
-                log.warn("Cleanup");
+                log.warn("Attempting graceful shutdown");
             }
             try {
                 resources.close();
@@ -138,6 +128,8 @@ public class InfinimumDBServer {
                 if (log.isErrorEnabled()) {
                     log.error("Exception while cleaning up");
                 }
+            } finally {
+                log.warn("Success");
             }
         });
         Runtime.getRuntime().addShutdownHook(cleanUpThread);
@@ -185,6 +177,10 @@ public class InfinimumDBServer {
                         }
                     }
                 }
+                case "GET" -> {
+                    log.info("Start GET operation");
+                    getOperation(worker, endpoint);
+                }
                 default -> {
                 }
             }
@@ -192,12 +188,67 @@ public class InfinimumDBServer {
         }
     }
 
-    private static String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder();
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b));
+    private void getOperation(Worker worker, Endpoint endpoint) throws ControlException {
+        final byte[] getDataSizeBytes = receiveData(Integer.BYTES, 0, worker, scope);
+        ByteBuffer byteBuffer = ByteBuffer.wrap(getDataSizeBytes);
+        int metadataSize = byteBuffer.getInt();
+        if (log.isInfoEnabled()) {
+            log.info("Received \"{}\"", metadataSize);
         }
-        return sb.toString();
+        final byte[] getDataBytes = receiveData(metadataSize, 0L, worker, scope);
+        HashMap<String, String> getData = SerializationUtils.deserialize(getDataBytes);
+        if (log.isInfoEnabled()) {
+            log.info("Received \"{}\"", getData);
+        }
+
+        byte[] id = new byte[0];
+        try {
+            id = getMD5Hash(getData.get("key"));
+        } catch (NoSuchAlgorithmException e) {
+            if (log.isErrorEnabled()) {
+                log.error("The MD5 hash algorithm was not found.", e);
+            }
+        }
+        final byte[] fullID = ArrayUtils.addAll(id, new byte[4]);
+
+        // TODO check if this server is responsible for that object and delegate if not.
+
+        if (log.isInfoEnabled()) {
+            log.info("Getting object from plasma store");
+        }
+        byte[] objectBytes = plasmaClient.get(fullID, 1, false);
+
+        if (objectBytes == null) {
+            if (log.isWarnEnabled()) {
+                log.warn("Object with key \"{}\" was not found in plasma store", getData.get("key"));
+            }
+            sendSingleMessage(serializeObject("404"), 0L, endpoint, scope, worker);
+            if (log.isInfoEnabled()) {
+                log.info("Get operation completed");
+            }
+        } else {
+            final MemoryDescriptor objectAddress;
+            try {
+                objectAddress = getMemoryDescriptorOfBytes(objectBytes, this.context);
+            } catch (ControlException e) {
+                if (log.isErrorEnabled()) {
+                    log.error("An exception occurred getting the objects memory address, aborting GET operation");
+                }
+                sendSingleMessage(serializeObject("500"), 0L, endpoint, scope, worker);
+                throw e;
+            }
+
+            final ArrayList<Long> requests = new ArrayList<>();
+            requests.add(prepareToSendData(serializeObject("200"), 0L, endpoint, scope));
+            requests.add(prepareToSendRemoteKey(objectAddress, endpoint));
+            sendData(requests, worker);
+
+            final String statusCode = SerializationUtils.deserialize(receiveData(10, 0L, worker, scope));
+            if (log.isInfoEnabled()) {
+                log.info("Received \"{}\"", statusCode);
+                log.info("Get operation completed");
+            }
+        }
     }
 
     private void putOperation(Worker worker, Endpoint endpoint) throws ControlException {
@@ -242,8 +293,8 @@ public class InfinimumDBServer {
         }
 
         ArrayList<Long> requests = new ArrayList<>();
-        requests.add(prepareToSendData(SerializationUtils.serialize("200"), 0L, endpoint, scope));
-        requests.add(prepareToSendData(SerializationUtils.serialize(this.serverID), 0L, endpoint, scope));
+        requests.add(prepareToSendData(serializeObject("200"), 0L, endpoint, scope));
+        requests.add(prepareToSendData(serializeObject(this.serverID), 0L, endpoint, scope));
         sendData(requests, worker);
 
         endpoint.close();
