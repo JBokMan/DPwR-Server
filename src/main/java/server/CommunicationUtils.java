@@ -59,6 +59,11 @@ public class CommunicationUtils {
         }
     }
 
+    public static void sendSingleMessage(final byte[] data, final long tagID, final Endpoint endpoint, final ResourceScope scope, final Worker worker) {
+        Long request = prepareToSendData(data, tagID, endpoint, scope);
+        sendData(List.of(request), worker);
+    }
+
     public static byte[] receiveData(final int size, final long tagID, final Worker worker, final ResourceScope scope) {
         final CommunicationBarrier barrier = new CommunicationBarrier();
         final MemorySegment buffer = MemorySegment.allocateNative(size, scope);
