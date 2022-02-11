@@ -224,7 +224,7 @@ public class InfinimumDBServer {
             }
             sendSingleMessage(serializeObject("404"), 0L, endpoint, scope, worker);
             if (log.isInfoEnabled()) {
-                log.info("Get operation completed");
+                log.info("Get operation completed \n");
             }
         } else {
             final MemoryDescriptor objectAddress;
@@ -246,9 +246,10 @@ public class InfinimumDBServer {
             final String statusCode = SerializationUtils.deserialize(receiveData(10, 0L, worker, scope));
             if (log.isInfoEnabled()) {
                 log.info("Received \"{}\"", statusCode);
-                log.info("Get operation completed");
+                log.info("Get operation completed \n");
             }
         }
+        endpoint.close();
     }
 
     private void putOperation(Worker worker, Endpoint endpoint) throws ControlException {
@@ -298,7 +299,7 @@ public class InfinimumDBServer {
         sendData(requests, worker);
 
         endpoint.close();
-        log.info("Put operation completed");
+        log.info("Put operation completed \n");
     }
 
     private void saveObjectToPlasma(byte[] id, byte[] object, byte[] metadata) throws DuplicateObjectException, PlasmaOutOfMemoryException {

@@ -60,7 +60,7 @@ public class CommunicationUtils {
     }
 
     public static void sendSingleMessage(final byte[] data, final long tagID, final Endpoint endpoint, final ResourceScope scope, final Worker worker) {
-        Long request = prepareToSendData(data, tagID, endpoint, scope);
+        final Long request = prepareToSendData(data, tagID, endpoint, scope);
         sendData(List.of(request), worker);
     }
 
