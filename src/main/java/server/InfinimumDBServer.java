@@ -10,15 +10,17 @@ import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.arrow.plasma.exceptions.DuplicateObjectException;
 import org.apache.arrow.plasma.exceptions.PlasmaOutOfMemoryException;
 import org.apache.commons.lang3.ArrayUtils;
-import org.apache.commons.lang3.SerializationUtils;
 
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.apache.commons.lang3.SerializationUtils.deserialize;
+import static org.apache.commons.lang3.SerializationUtils.serialize;
 import static server.CommunicationUtils.*;
 
 @Slf4j
@@ -135,7 +137,7 @@ public class InfinimumDBServer {
             var endpointParameters = new EndpointParameters().setConnectionRequest(connectionRequest.get());
             // ToDo create worker pool and create endpoint from free worker
             try (Endpoint endpoint = this.worker.createEndpoint(endpointParameters)) {
-                String operationName = SerializationUtils.deserialize(receiveData(OPERATION_MESSAGE_SIZE, 0L, worker, scope));
+                String operationName = deserialize(receiveData(OPERATION_MESSAGE_SIZE, 0L, worker, scope));
                 if (log.isInfoEnabled()) {
                     log.info("Received \"{}\"", operationName);
                 }
@@ -179,7 +181,7 @@ public class InfinimumDBServer {
             log.info("Received \"{}\"", dataSize);
         }
         final byte[] dataAsBytes = receiveData(dataSize, 0L, worker, scope);
-        HashMap<String, String> data = SerializationUtils.deserialize(dataAsBytes);
+        HashMap<String, String> data = deserialize(dataAsBytes);
         if (log.isInfoEnabled()) {
             log.info("Received \"{}\"", data);
         }
@@ -207,16 +209,16 @@ public class InfinimumDBServer {
                 if (log.isErrorEnabled()) {
                     log.error("An exception occurred getting the objects memory address, aborting GET operation");
                 }
-                sendSingleMessage(serializeObject("500"), 0L, endpoint, scope, worker);
+                sendSingleMessage(serialize("500"), 0L, endpoint, scope, worker);
                 throw e;
             }
 
             final ArrayList<Long> requests = new ArrayList<>();
-            requests.add(prepareToSendData(serializeObject("200"), 0L, endpoint, scope));
+            requests.add(prepareToSendData(serialize("200"), 0L, endpoint, scope));
             requests.add(prepareToSendRemoteKey(objectAddress, endpoint));
             sendData(requests, worker);
 
-            final String statusCode = SerializationUtils.deserialize(receiveData(10, 0L, worker, scope));
+            final String statusCode = deserialize(receiveData(10, 0L, worker, scope));
             if (log.isInfoEnabled()) {
                 log.info("Received \"{}\"", statusCode);
                 log.info("Get operation completed \n");
@@ -225,7 +227,7 @@ public class InfinimumDBServer {
             if (log.isWarnEnabled()) {
                 log.warn("Object with key \"{}\" was not found in plasma store", data.get("key"));
             }
-            sendSingleMessage(serializeObject("404"), 0L, endpoint, scope, worker);
+            sendSingleMessage(serialize("404"), 0L, endpoint, scope, worker);
             if (log.isInfoEnabled()) {
                 log.info("Get operation completed \n");
             }
@@ -236,7 +238,7 @@ public class InfinimumDBServer {
         final MemoryDescriptor descriptor = receiveMemoryDescriptor(0L, worker);
         final byte[] remoteObject = receiveRemoteObject(descriptor, endpoint, worker, scope, resources);
         if (log.isInfoEnabled()) {
-            log.info("Read \"{}\" from remote buffer", SerializationUtils.deserialize(remoteObject).toString());
+            log.info("Read \"{}\" from remote buffer", deserialize(remoteObject).toString());
         }
 
         final byte[] metadataSizeBytes = receiveData(Integer.BYTES, 0, worker, scope);
@@ -246,7 +248,7 @@ public class InfinimumDBServer {
             log.info("Received \"{}\"", metadataSize);
         }
         final byte[] metadataBytes = receiveData(metadataSize, 0L, worker, scope);
-        HashMap<String, String> metadata = SerializationUtils.deserialize(metadataBytes);
+        HashMap<String, String> metadata = deserialize(metadataBytes);
         if (log.isInfoEnabled()) {
             log.info("Received \"{}\"", metadata);
         }
@@ -261,24 +263,59 @@ public class InfinimumDBServer {
         }
         final byte[] fullID = ArrayUtils.addAll(id, new byte[4]);
 
+        PlasmaEntry newPlasmaEntry = new PlasmaEntry(metadata.get("key"), remoteObject, new byte[0]);
+        byte[] newPlasmaEntryBytes = serialize(newPlasmaEntry);
+
         try {
-            saveObjectToPlasma(fullID, remoteObject, metadataBytes);
+            saveObjectToPlasma(fullID, newPlasmaEntryBytes, metadataBytes);
         } catch (DuplicateObjectException e) {
-            // TODO: check if hash collision occurred
-            byte[] plasmaMetadata = plasmaClient.get(fullID, 1000, true);
             if (log.isWarnEnabled()) {
                 log.warn(e.getMessage());
             }
-            sendSingleMessage(serializeObject("409"), 0L, endpoint, scope, worker);
-            if (log.isInfoEnabled()) {
-                log.info("Put operation completed \n");
+            // TODO: check if hash collision occurred
+            PlasmaEntry plasmaEntry = deserialize(plasmaClient.get(fullID, 1, false));
+            if (plasmaEntry.getKey().equals(newPlasmaEntry.getKey())) {
+                sendSingleMessage(serialize("409"), 0L, endpoint, scope, worker);
+                if (log.isInfoEnabled()) {
+                    log.info("Put operation completed \n");
+                }
+                return;
+            } else {
+                byte[] objectIdWithFreeNextID = traverseEntriesUntilNextIsEmpty(plasmaEntry);
+                PlasmaEntry plasmaEntry1 = deserialize(plasmaClient.get(objectIdWithFreeNextID, 1, false));
+                String idAsHexString = bytesToHex(objectIdWithFreeNextID);
+                log.info(idAsHexString);
+                String tailEnd = idAsHexString.substring(idAsHexString.length() - 4);
+                log.info(tailEnd);
+                Integer tailEndInt = Integer.valueOf(tailEnd);
+                tailEndInt += 1;
+                String newID = idAsHexString.substring(0, idAsHexString.length() - 4) + tailEndInt;
+                log.info(newID);
+                byte[] newIdBytes = newID.getBytes(StandardCharsets.UTF_8);
+                log.info(bytesToHex(newIdBytes));
+                plasmaClient.delete(objectIdWithFreeNextID);
+                PlasmaEntry plasmaEntry2 = new PlasmaEntry(plasmaEntry1.key(), plasmaEntry1.value(), newIdBytes);
+                saveObjectToPlasma(objectIdWithFreeNextID, serialize(plasmaEntry2), new byte[0]);
+                saveObjectToPlasma(newIdBytes, newPlasmaEntryBytes, new byte[0]);
             }
+
             return;
         }
-        sendSingleMessage(serializeObject("200"), 0L, endpoint, scope, worker);
+        sendSingleMessage(serialize("200"), 0L, endpoint, scope, worker);
         if (log.isInfoEnabled()) {
             log.info("Put operation completed \n");
         }
+    }
+
+    private byte[] traverseEntriesUntilNextIsEmpty(final PlasmaEntry plasmaEntry) {
+        byte[] nextID = plasmaEntry.nextPlasmaID();
+        byte[] lastID = nextID;
+        while (nextID != null && nextID.length > 0) {
+            lastID = nextID;
+            final PlasmaEntry nextPlasmaEntry = deserialize(plasmaClient.get(nextID, 1, false));
+            nextID = nextPlasmaEntry.nextPlasmaID();
+        }
+        return lastID;
     }
 
     private void saveObjectToPlasma(byte[] id, byte[] object, byte[] metadata) throws DuplicateObjectException, PlasmaOutOfMemoryException {

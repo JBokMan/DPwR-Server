@@ -8,10 +8,7 @@ import jdk.incubator.foreign.MemorySegment;
 import jdk.incubator.foreign.ResourceScope;
 import jdk.incubator.foreign.ValueLayout;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.SerializationException;
-import org.apache.commons.lang3.SerializationUtils;
 
-import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -23,6 +20,14 @@ public class CommunicationUtils {
     public static byte[] getMD5Hash(final String text) throws NoSuchAlgorithmException {
         final MessageDigest messageDigest = MessageDigest.getInstance("MD5");
         return messageDigest.digest(text.getBytes(StandardCharsets.UTF_8));
+    }
+
+    public static String bytesToHex(final byte[] bytes) {
+        final StringBuilder sb = new StringBuilder();
+        for (final byte b : bytes) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
     }
 
     public static MemoryDescriptor getMemoryDescriptorOfBytes(final byte[] object, final Context context) throws ControlException {
@@ -72,8 +77,7 @@ public class CommunicationUtils {
             log.info("Receiving message");
         }
 
-        final long request = worker.receiveTagged(buffer, Tag.of(tagID), new RequestParameters()
-                .setReceiveCallback(barrier::release));
+        final long request = worker.receiveTagged(buffer, Tag.of(tagID), new RequestParameters().setReceiveCallback(barrier::release));
 
         awaitRequestIfNecessary(request, worker, barrier);
 
@@ -88,8 +92,7 @@ public class CommunicationUtils {
             log.info("Receiving Remote Key");
         }
 
-        final long request = worker.receiveTagged(descriptor, Tag.of(tagID), new RequestParameters()
-                .setReceiveCallback(barrier::release));
+        final long request = worker.receiveTagged(descriptor, Tag.of(tagID), new RequestParameters().setReceiveCallback(barrier::release));
 
         awaitRequestIfNecessary(request, worker, barrier);
 
@@ -106,8 +109,7 @@ public class CommunicationUtils {
         final MemorySegment targetBuffer = MemorySegment.allocateNative(descriptor.remoteSize(), scope);
         resourcePool.push(remoteKey);
 
-        final long request = endpoint.get(targetBuffer, descriptor.remoteAddress(), remoteKey, new RequestParameters()
-                .setReceiveCallback(barrier::release));
+        final long request = endpoint.get(targetBuffer, descriptor.remoteAddress(), remoteKey, new RequestParameters().setReceiveCallback(barrier::release));
 
         awaitRequestIfNecessary(request, worker, barrier);
 
@@ -131,9 +133,5 @@ public class CommunicationUtils {
                 Requests.release(request);
             }
         }
-    }
-
-    public static byte[] serializeObject(final Object object) throws SerializationException {
-        return SerializationUtils.serialize((Serializable) object);
     }
 }
