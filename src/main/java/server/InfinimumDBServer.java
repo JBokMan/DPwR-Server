@@ -16,7 +16,6 @@ import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -35,10 +34,7 @@ public class InfinimumDBServer {
     private transient final ResourcePool resources = new ResourcePool();
     protected transient final ResourceScope scope = ResourceScope.newSharedScope();
     private static final long DEFAULT_REQUEST_SIZE = 1024;
-    private static final ContextParameters.Feature[] FEATURE_SET = {
-            ContextParameters.Feature.TAG, ContextParameters.Feature.RMA, ContextParameters.Feature.WAKEUP, ContextParameters.Feature.AM,
-            ContextParameters.Feature.ATOMIC_32, ContextParameters.Feature.ATOMIC_64, ContextParameters.Feature.STREAM
-    };
+    private static final ContextParameters.Feature[] FEATURE_SET = {ContextParameters.Feature.TAG, ContextParameters.Feature.RMA, ContextParameters.Feature.WAKEUP, ContextParameters.Feature.AM, ContextParameters.Feature.ATOMIC_32, ContextParameters.Feature.ATOMIC_64, ContextParameters.Feature.STREAM};
     private transient Worker worker;
     private transient Context context;
     private transient final InetSocketAddress listenAddress;
@@ -66,11 +62,6 @@ public class InfinimumDBServer {
         }
     }
 
-    public boolean isThisServerResponsible(byte[] object) {
-        int responsibleServerID = Math.abs(Arrays.hashCode(object) % serverCount);
-        return this.serverID == responsibleServerID;
-    }
-
     public void listen() {
         NativeLogger.enable();
         if (log.isInfoEnabled()) {
@@ -92,31 +83,22 @@ public class InfinimumDBServer {
 
     private void initialize() throws ControlException, InterruptedException {
         // Create context parameters
-        var contextParameters = new ContextParameters()
-                .setFeatures(FEATURE_SET)
-                .setRequestSize(DEFAULT_REQUEST_SIZE);
+        var contextParameters = new ContextParameters().setFeatures(FEATURE_SET).setRequestSize(DEFAULT_REQUEST_SIZE);
 
         // Read configuration (Environment Variables)
-        var configuration = pushResource(
-                Configuration.read()
-        );
+        var configuration = pushResource(Configuration.read());
 
         log.info("Initializing context");
 
         // Initialize UCP context
-        this.context = pushResource(
-                Context.initialize(contextParameters, configuration)
-        );
+        this.context = pushResource(Context.initialize(contextParameters, configuration));
 
-        var workerParameters = new WorkerParameters()
-                .setThreadMode(ThreadMode.SINGLE);
+        var workerParameters = new WorkerParameters().setThreadMode(ThreadMode.SINGLE);
 
         log.info("Creating worker");
 
         // Create a worker
-        this.worker = pushResource(
-                context.createWorker(workerParameters)
-        );
+        this.worker = pushResource(context.createWorker(workerParameters));
 
         Thread cleanUpThread = new Thread(() -> {
             if (log.isWarnEnabled()) {
@@ -142,9 +124,7 @@ public class InfinimumDBServer {
 
     private void listenLoop() throws InterruptedException, ControlException {
         var connectionRequest = new AtomicReference<ConnectionRequest>();
-        var listenerParams = new ListenerParameters()
-                .setListenAddress(listenAddress)
-                .setConnectionHandler(connectionRequest::set);
+        var listenerParams = new ListenerParameters().setListenAddress(listenAddress).setConnectionHandler(connectionRequest::set);
 
         log.info("Listening for new connection requests on {}", listenAddress);
         pushResource(this.worker.createListener(listenerParams));
@@ -152,58 +132,61 @@ public class InfinimumDBServer {
         while (true) {
             Requests.await(this.worker, connectionRequest);
 
-            var endpointParameters = new EndpointParameters()
-                    .setConnectionRequest(connectionRequest.get());
+            var endpointParameters = new EndpointParameters().setConnectionRequest(connectionRequest.get());
             // ToDo create worker pool and create endpoint from free worker
-            Endpoint endpoint = null;
-            try {
-                endpoint = this.worker.createEndpoint(endpointParameters);
+            try (Endpoint endpoint = this.worker.createEndpoint(endpointParameters)) {
+                String operationName = SerializationUtils.deserialize(receiveData(OPERATION_MESSAGE_SIZE, 0L, worker, scope));
+                if (log.isInfoEnabled()) {
+                    log.info("Received \"{}\"", operationName);
+                }
+                switch (operationName) {
+                    case "PUT" -> {
+                        if (log.isInfoEnabled()) {
+                            log.info("Start PUT operation");
+                        }
+                        try {
+                            putOperation(worker, endpoint);
+                        } catch (ControlException e) {
+                            if (log.isErrorEnabled()) {
+                                log.error("An exception occurred while receiving the remote key in a PUT operation.", e);
+                            }
+                        }
+                    }
+                    case "GET" -> {
+                        if (log.isInfoEnabled()) {
+                            log.info("Start GET operation");
+                        }
+                        getOperation(worker, endpoint);
+                    }
+                    default -> {
+                    }
+                }
             } catch (ControlException e) {
                 if (log.isErrorEnabled()) {
                     log.error("An exception occurred while creating an endpoint.", e);
                 }
+            } finally {
+                connectionRequest.set(null);
             }
-            String operationName = SerializationUtils.deserialize(receiveData(OPERATION_MESSAGE_SIZE, 0L, worker, scope));
-
-            log.info("Received \"{}\"", operationName);
-            switch (operationName) {
-                case "PUT" -> {
-                    log.info("Start PUT operation");
-                    try {
-                        putOperation(worker, endpoint);
-                    } catch (ControlException e) {
-                        if (log.isErrorEnabled()) {
-                            log.error("An exception occurred while receiving the remote key in a PUT operation.", e);
-                        }
-                    }
-                }
-                case "GET" -> {
-                    log.info("Start GET operation");
-                    getOperation(worker, endpoint);
-                }
-                default -> {
-                }
-            }
-            connectionRequest.set(null);
         }
     }
 
     private void getOperation(Worker worker, Endpoint endpoint) throws ControlException {
-        final byte[] getDataSizeBytes = receiveData(Integer.BYTES, 0, worker, scope);
-        ByteBuffer byteBuffer = ByteBuffer.wrap(getDataSizeBytes);
-        int metadataSize = byteBuffer.getInt();
+        final byte[] dataSizeAsBytes = receiveData(Integer.BYTES, 0, worker, scope);
+        ByteBuffer byteBuffer = ByteBuffer.wrap(dataSizeAsBytes);
+        int dataSize = byteBuffer.getInt();
         if (log.isInfoEnabled()) {
-            log.info("Received \"{}\"", metadataSize);
+            log.info("Received \"{}\"", dataSize);
         }
-        final byte[] getDataBytes = receiveData(metadataSize, 0L, worker, scope);
-        HashMap<String, String> getData = SerializationUtils.deserialize(getDataBytes);
+        final byte[] dataAsBytes = receiveData(dataSize, 0L, worker, scope);
+        HashMap<String, String> data = SerializationUtils.deserialize(dataAsBytes);
         if (log.isInfoEnabled()) {
-            log.info("Received \"{}\"", getData);
+            log.info("Received \"{}\"", data);
         }
 
         byte[] id = new byte[0];
         try {
-            id = getMD5Hash(getData.get("key"));
+            id = getMD5Hash(data.get("key"));
         } catch (NoSuchAlgorithmException e) {
             if (log.isErrorEnabled()) {
                 log.error("The MD5 hash algorithm was not found.", e);
@@ -211,22 +194,12 @@ public class InfinimumDBServer {
         }
         final byte[] fullID = ArrayUtils.addAll(id, new byte[4]);
 
-        // TODO check if this server is responsible for that object and delegate if not.
-
         if (log.isInfoEnabled()) {
             log.info("Getting object from plasma store");
         }
         byte[] objectBytes = plasmaClient.get(fullID, 1, false);
 
-        if (objectBytes == null) {
-            if (log.isWarnEnabled()) {
-                log.warn("Object with key \"{}\" was not found in plasma store", getData.get("key"));
-            }
-            sendSingleMessage(serializeObject("404"), 0L, endpoint, scope, worker);
-            if (log.isInfoEnabled()) {
-                log.info("Get operation completed \n");
-            }
-        } else {
+        if (objectBytes != null && objectBytes.length > 0) {
             final MemoryDescriptor objectAddress;
             try {
                 objectAddress = getMemoryDescriptorOfBytes(objectBytes, this.context);
@@ -248,8 +221,15 @@ public class InfinimumDBServer {
                 log.info("Received \"{}\"", statusCode);
                 log.info("Get operation completed \n");
             }
+        } else {
+            if (log.isWarnEnabled()) {
+                log.warn("Object with key \"{}\" was not found in plasma store", data.get("key"));
+            }
+            sendSingleMessage(serializeObject("404"), 0L, endpoint, scope, worker);
+            if (log.isInfoEnabled()) {
+                log.info("Get operation completed \n");
+            }
         }
-        endpoint.close();
     }
 
     private void putOperation(Worker worker, Endpoint endpoint) throws ControlException {
@@ -281,8 +261,6 @@ public class InfinimumDBServer {
         }
         final byte[] fullID = ArrayUtils.addAll(id, new byte[4]);
 
-        // TODO check if this server is responsible for that object and delegate if not.
-
         try {
             saveObjectToPlasma(fullID, remoteObject, metadataBytes);
         } catch (DuplicateObjectException e) {
@@ -291,15 +269,16 @@ public class InfinimumDBServer {
             if (log.isWarnEnabled()) {
                 log.warn(e.getMessage());
             }
+            sendSingleMessage(serializeObject("409"), 0L, endpoint, scope, worker);
+            if (log.isInfoEnabled()) {
+                log.info("Put operation completed \n");
+            }
+            return;
         }
-
-        ArrayList<Long> requests = new ArrayList<>();
-        requests.add(prepareToSendData(serializeObject("200"), 0L, endpoint, scope));
-        requests.add(prepareToSendData(serializeObject(this.serverID), 0L, endpoint, scope));
-        sendData(requests, worker);
-
-        endpoint.close();
-        log.info("Put operation completed \n");
+        sendSingleMessage(serializeObject("200"), 0L, endpoint, scope, worker);
+        if (log.isInfoEnabled()) {
+            log.info("Put operation completed \n");
+        }
     }
 
     private void saveObjectToPlasma(byte[] id, byte[] object, byte[] metadata) throws DuplicateObjectException, PlasmaOutOfMemoryException {
