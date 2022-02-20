@@ -10,7 +10,6 @@ import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.arrow.plasma.exceptions.DuplicateObjectException;
 import org.apache.arrow.plasma.exceptions.PlasmaOutOfMemoryException;
 import org.apache.commons.lang3.ArrayUtils;
-import org.apache.commons.lang3.SerializationUtils;
 
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
@@ -161,6 +160,12 @@ public class InfinimumDBServer {
                         }
                         getOperation(worker, endpoint);
                     }
+                    case "DEL" -> {
+                        if (log.isInfoEnabled()) {
+                            log.info("Start DEL operation");
+                        }
+                        delOperation(worker, endpoint);
+                    }
                     default -> {
                     }
                 }
@@ -170,6 +175,91 @@ public class InfinimumDBServer {
                 }
             } finally {
                 connectionRequest.set(null);
+            }
+        }
+    }
+
+    private void delOperation(Worker worker, Endpoint endpoint) {
+        final byte[] dataSizeAsBytes = receiveData(Integer.BYTES, 0, worker, scope);
+        ByteBuffer byteBuffer = ByteBuffer.wrap(dataSizeAsBytes);
+        int dataSize = byteBuffer.getInt();
+        if (log.isInfoEnabled()) {
+            log.info("Received \"{}\"", dataSize);
+        }
+        final byte[] dataAsBytes = receiveData(dataSize, 0L, worker, scope);
+        HashMap<String, String> data = deserialize(dataAsBytes);
+        if (log.isInfoEnabled()) {
+            log.info("Received \"{}\"", data);
+        }
+        String keyToDelete = data.get("key");
+
+        byte[] id = new byte[0];
+        try {
+            id = getMD5Hash(keyToDelete);
+        } catch (NoSuchAlgorithmException e) {
+            if (log.isErrorEnabled()) {
+                log.error("The MD5 hash algorithm was not found.", e);
+            }
+        }
+        final byte[] fullID = ArrayUtils.addAll(id, new byte[4]);
+
+        if (log.isInfoEnabled()) {
+            log.info("Getting object from plasma store");
+        }
+        byte[] objectBytes = plasmaClient.get(fullID, -1, false);
+
+        // check if object is present
+        if (objectBytes != null && objectBytes.length > 0) {
+            if (log.isInfoEnabled()) {
+                log.info("Object is present");
+            }
+            PlasmaEntry entry = deserialize(objectBytes);
+            if (entry.key.equals(keyToDelete)) {
+                if (log.isInfoEnabled()) {
+                    log.info("Keys match");
+                }
+                if (entry.nextPlasmaID != null && entry.nextPlasmaID.length > 0) {
+                    if (log.isInfoEnabled()) {
+                        log.info("Next plasma id not empty");
+                    }
+                    //Todo work along chained List
+                } else {
+                    if (log.isInfoEnabled()) {
+                        log.info("Next plasma id empty");
+                        log.info("Deleting entry...");
+                    }
+                    plasmaClient.delete(fullID);
+                    if (log.isInfoEnabled()) {
+                        log.info("Entry deleted");
+                    }
+                    sendSingleMessage(serialize("204"), 0L, endpoint, scope, worker);
+                    if (log.isInfoEnabled()) {
+                        log.info("Del operation completed \n");
+                    }
+                }
+            } else {
+                if (entry.nextPlasmaID != null && entry.nextPlasmaID.length > 0) {
+                    if (log.isInfoEnabled()) {
+                        log.info("Next plasma id not empty");
+                    }
+                    //Todo search for matching key in chained list
+                } else {
+                    if (log.isWarnEnabled()) {
+                        log.warn("Object with key \"{}\" was not found in plasma store", data.get("key"));
+                    }
+                    sendSingleMessage(serialize("404"), 0L, endpoint, scope, worker);
+                    if (log.isInfoEnabled()) {
+                        log.info("Del operation completed \n");
+                    }
+                }
+            }
+        } else {
+            if (log.isWarnEnabled()) {
+                log.warn("Object with key \"{}\" was not found in plasma store", data.get("key"));
+            }
+            sendSingleMessage(serialize("404"), 0L, endpoint, scope, worker);
+            if (log.isInfoEnabled()) {
+                log.info("Del operation completed \n");
             }
         }
     }
@@ -200,7 +290,7 @@ public class InfinimumDBServer {
         if (log.isInfoEnabled()) {
             log.info("Getting object from plasma store");
         }
-        PlasmaEntry entry = SerializationUtils.deserialize(plasmaClient.get(fullID, 1, false));
+        PlasmaEntry entry = deserialize(plasmaClient.get(fullID, 1, false));
         byte[] objectBytes = entry.value;
 
         if (objectBytes != null && objectBytes.length > 0) {
@@ -277,7 +367,7 @@ public class InfinimumDBServer {
             // TODO: check if hash collision occurred
             byte[] entryBytes = plasmaClient.get(fullID, -1, false);
             log.info("Bla");
-            PlasmaEntry plasmaEntry = SerializationUtils.deserialize(entryBytes);
+            PlasmaEntry plasmaEntry = deserialize(entryBytes);
             log.info("Bla2");
             if (plasmaEntry.key.equals(newPlasmaEntry.key)) {
                 sendSingleMessage(serialize("409"), 0L, endpoint, scope, worker);
