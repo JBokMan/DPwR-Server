@@ -202,6 +202,7 @@ public class InfinimumDBServer {
             }
         }
         final byte[] fullID = ArrayUtils.addAll(id, new byte[4]);
+        log.info("FullID: {}", fullID);
 
         if (log.isInfoEnabled()) {
             log.info("Getting object from plasma store");
@@ -228,6 +229,7 @@ public class InfinimumDBServer {
                         log.info("Next plasma id empty");
                         log.info("Deleting entry...");
                     }
+                    plasmaClient.release(fullID);
                     plasmaClient.delete(fullID);
                     if (log.isInfoEnabled()) {
                         log.info("Entry deleted");
@@ -286,12 +288,14 @@ public class InfinimumDBServer {
             }
         }
         final byte[] fullID = ArrayUtils.addAll(id, new byte[4]);
+        log.info("FullID: {}", fullID);
 
         if (log.isInfoEnabled()) {
             log.info("Getting object from plasma store");
         }
         PlasmaEntry entry = deserialize(plasmaClient.get(fullID, 1, false));
         byte[] objectBytes = entry.value;
+        plasmaClient.release(fullID);
 
         if (objectBytes != null && objectBytes.length > 0) {
             final MemoryDescriptor objectAddress;
@@ -354,30 +358,31 @@ public class InfinimumDBServer {
             }
         }
         final byte[] fullID = ArrayUtils.addAll(id, new byte[4]);
+        log.info("FullID: {}", fullID);
 
         PlasmaEntry newPlasmaEntry = new PlasmaEntry(metadata.get("key"), remoteObject, new byte[0]);
         byte[] newPlasmaEntryBytes = serialize(newPlasmaEntry);
 
         try {
-            saveObjectToPlasma(fullID, newPlasmaEntryBytes, metadataBytes);
+            saveObjectToPlasma(fullID, newPlasmaEntryBytes, new byte[0]);
+            sendSingleMessage(serialize("200"), 0L, endpoint, scope, worker);
+            if (log.isInfoEnabled()) {
+                log.info("Put operation completed \n");
+            }
         } catch (DuplicateObjectException e) {
             if (log.isWarnEnabled()) {
                 log.warn(e.getMessage());
             }
-            // TODO: check if hash collision occurred
-            byte[] entryBytes = plasmaClient.get(fullID, -1, false);
-            log.info("Bla");
-            PlasmaEntry plasmaEntry = deserialize(entryBytes);
-            log.info("Bla2");
+            PlasmaEntry plasmaEntry = deserialize(plasmaClient.get(fullID, -1, false));
             if (plasmaEntry.key.equals(newPlasmaEntry.key)) {
                 sendSingleMessage(serialize("409"), 0L, endpoint, scope, worker);
+                plasmaClient.release(fullID);
                 if (log.isInfoEnabled()) {
                     log.info("Put operation completed \n");
                 }
-                return;
             } else {
                 byte[] objectIdWithFreeNextID = traverseEntriesUntilNextIsEmpty(plasmaEntry);
-                PlasmaEntry plasmaEntry1 = deserialize(plasmaClient.get(objectIdWithFreeNextID, 1, false));
+                PlasmaEntry plasmaEntryWithEmptyNextID = deserialize(plasmaClient.get(objectIdWithFreeNextID, -1, false));
                 String idAsHexString = bytesToHex(objectIdWithFreeNextID);
                 log.info(idAsHexString);
                 String tailEnd = idAsHexString.substring(idAsHexString.length() - 4);
@@ -388,16 +393,12 @@ public class InfinimumDBServer {
                 log.info(newID);
                 byte[] newIdBytes = newID.getBytes(StandardCharsets.UTF_8);
                 log.info(bytesToHex(newIdBytes));
+                plasmaClient.release(objectIdWithFreeNextID);
                 plasmaClient.delete(objectIdWithFreeNextID);
-                PlasmaEntry plasmaEntry2 = new PlasmaEntry(plasmaEntry1.key, plasmaEntry1.value, newIdBytes);
-                saveObjectToPlasma(objectIdWithFreeNextID, serialize(plasmaEntry2), new byte[0]);
+                PlasmaEntry updatedEntry = new PlasmaEntry(plasmaEntryWithEmptyNextID.key, plasmaEntryWithEmptyNextID.value, newIdBytes);
+                saveObjectToPlasma(objectIdWithFreeNextID, serialize(updatedEntry), new byte[0]);
                 saveObjectToPlasma(newIdBytes, newPlasmaEntryBytes, new byte[0]);
             }
-            return;
-        }
-        sendSingleMessage(serialize("200"), 0L, endpoint, scope, worker);
-        if (log.isInfoEnabled()) {
-            log.info("Put operation completed \n");
         }
     }
 
@@ -406,8 +407,9 @@ public class InfinimumDBServer {
         byte[] lastID = nextID;
         while (nextID != null && nextID.length > 0) {
             lastID = nextID;
-            final PlasmaEntry nextPlasmaEntry = deserialize(plasmaClient.get(nextID, 1, false));
+            final PlasmaEntry nextPlasmaEntry = deserialize(plasmaClient.get(nextID, -1, false));
             nextID = nextPlasmaEntry.nextPlasmaID;
+            plasmaClient.release(nextID);
         }
         return lastID;
     }
@@ -419,6 +421,7 @@ public class InfinimumDBServer {
             byteBuffer.put(b);
         }
         plasmaClient.seal(id);
+        plasmaClient.release(id);
         log.info("Sealed new object in plasma store");
     }
 }
