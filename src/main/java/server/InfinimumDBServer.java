@@ -13,10 +13,11 @@ import org.apache.commons.lang3.ArrayUtils;
 
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HexFormat;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.apache.commons.lang3.SerializationUtils.deserialize;
@@ -25,6 +26,8 @@ import static server.CommunicationUtils.*;
 
 @Slf4j
 public class InfinimumDBServer {
+
+    private final boolean TEST_MODE = false;
 
     private static final int OPERATION_MESSAGE_SIZE = 10;
     final transient int serverID = 0;
@@ -183,86 +186,89 @@ public class InfinimumDBServer {
         final byte[] dataSizeAsBytes = receiveData(Integer.BYTES, 0, worker, scope);
         ByteBuffer byteBuffer = ByteBuffer.wrap(dataSizeAsBytes);
         int dataSize = byteBuffer.getInt();
-        if (log.isInfoEnabled()) {
-            log.info("Received \"{}\"", dataSize);
-        }
+
+        log.info("Received \"{}\"", dataSize);
+        if (TEST_MODE) waitForTwoSeconds();
+
         final byte[] dataAsBytes = receiveData(dataSize, 0L, worker, scope);
         HashMap<String, String> data = deserialize(dataAsBytes);
-        if (log.isInfoEnabled()) {
-            log.info("Received \"{}\"", data);
-        }
+
+        log.info("Received \"{}\"", data);
+        if (TEST_MODE) waitForTwoSeconds();
+
         String keyToDelete = data.get("key");
 
         byte[] id = new byte[0];
         try {
             id = getMD5Hash(keyToDelete);
         } catch (NoSuchAlgorithmException e) {
-            if (log.isErrorEnabled()) {
-                log.error("The MD5 hash algorithm was not found.", e);
-            }
+            log.error("The MD5 hash algorithm was not found.", e);
         }
         final byte[] fullID = ArrayUtils.addAll(id, new byte[4]);
-        log.info("FullID: {}", fullID);
 
-        if (log.isInfoEnabled()) {
-            log.info("Getting object from plasma store");
-        }
-        byte[] objectBytes = plasmaClient.get(fullID, -1, false);
+        log.info("FullID: {}", fullID);
+        if (TEST_MODE) waitForTwoSeconds();
+
+        byte[] objectBytes = plasmaClient.get(fullID, 100, false);
 
         // check if object is present
         if (objectBytes != null && objectBytes.length > 0) {
-            if (log.isInfoEnabled()) {
-                log.info("Object is present");
-            }
+            log.info("Object is present");
+
             PlasmaEntry entry = deserialize(objectBytes);
+
+            log.info("Object: {}", entry);
+            if (TEST_MODE) waitForTwoSeconds();
+
             if (entry.key.equals(keyToDelete)) {
-                if (log.isInfoEnabled()) {
-                    log.info("Keys match");
-                }
+                log.info("Keys match");
+
                 if (entry.nextPlasmaID != null && entry.nextPlasmaID.length > 0) {
-                    if (log.isInfoEnabled()) {
-                        log.info("Next plasma id not empty");
-                    }
+                    log.info("Next plasma id not empty");
+
                     //Todo work along chained List
                 } else {
-                    if (log.isInfoEnabled()) {
-                        log.info("Next plasma id empty");
-                        log.info("Deleting entry...");
-                    }
+                    log.info("Next plasma id empty");
+                    log.info("Deleting entry...");
+                    if (TEST_MODE) waitForTwoSeconds();
+
                     plasmaClient.release(fullID);
                     plasmaClient.delete(fullID);
-                    if (log.isInfoEnabled()) {
-                        log.info("Entry deleted");
-                    }
+
+                    log.info("Entry deleted");
+                    if (TEST_MODE) waitForTwoSeconds();
+
                     sendSingleMessage(serialize("204"), 0L, endpoint, scope, worker);
-                    if (log.isInfoEnabled()) {
-                        log.info("Del operation completed \n");
-                    }
+
+                    log.info("Del operation completed \n");
                 }
             } else {
                 if (entry.nextPlasmaID != null && entry.nextPlasmaID.length > 0) {
-                    if (log.isInfoEnabled()) {
-                        log.info("Next plasma id not empty");
-                    }
+                    log.info("Next plasma id not empty");
+
                     //Todo search for matching key in chained list
                 } else {
-                    if (log.isWarnEnabled()) {
-                        log.warn("Object with key \"{}\" was not found in plasma store", data.get("key"));
-                    }
+                    log.warn("Object with key \"{}\" was not found in plasma store", data.get("key"));
+
                     sendSingleMessage(serialize("404"), 0L, endpoint, scope, worker);
-                    if (log.isInfoEnabled()) {
-                        log.info("Del operation completed \n");
-                    }
+
+                    log.info("Del operation completed \n");
                 }
             }
         } else {
-            if (log.isWarnEnabled()) {
-                log.warn("Object with key \"{}\" was not found in plasma store", data.get("key"));
-            }
+            log.warn("Object with key \"{}\" was not found in plasma store", data.get("key"));
+
             sendSingleMessage(serialize("404"), 0L, endpoint, scope, worker);
-            if (log.isInfoEnabled()) {
-                log.info("Del operation completed \n");
-            }
+
+            log.info("Del operation completed \n");
+        }
+    }
+
+    private void waitForTwoSeconds() {
+        try {
+            TimeUnit.SECONDS.sleep(2);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
         }
     }
 
@@ -270,95 +276,101 @@ public class InfinimumDBServer {
         final byte[] dataSizeAsBytes = receiveData(Integer.BYTES, 0, worker, scope);
         ByteBuffer byteBuffer = ByteBuffer.wrap(dataSizeAsBytes);
         int dataSize = byteBuffer.getInt();
-        if (log.isInfoEnabled()) {
-            log.info("Received \"{}\"", dataSize);
-        }
+
+        log.info("Received \"{}\"", dataSize);
+        if (TEST_MODE) waitForTwoSeconds();
+
         final byte[] dataAsBytes = receiveData(dataSize, 0L, worker, scope);
         HashMap<String, String> data = deserialize(dataAsBytes);
-        if (log.isInfoEnabled()) {
-            log.info("Received \"{}\"", data);
-        }
+
+        log.info("Received \"{}\"", data);
+        if (TEST_MODE) waitForTwoSeconds();
 
         byte[] id = new byte[0];
         try {
             id = getMD5Hash(data.get("key"));
         } catch (NoSuchAlgorithmException e) {
-            if (log.isErrorEnabled()) {
-                log.error("The MD5 hash algorithm was not found.", e);
-            }
+            log.error("The MD5 hash algorithm was not found.", e);
         }
         final byte[] fullID = ArrayUtils.addAll(id, new byte[4]);
         log.info("FullID: {}", fullID);
+        if (TEST_MODE) waitForTwoSeconds();
 
-        if (log.isInfoEnabled()) {
-            log.info("Getting object from plasma store");
-        }
+        log.info("Getting object from plasma store");
         PlasmaEntry entry = deserialize(plasmaClient.get(fullID, 1, false));
-        byte[] objectBytes = entry.value;
-        plasmaClient.release(fullID);
 
-        if (objectBytes != null && objectBytes.length > 0) {
-            final MemoryDescriptor objectAddress;
-            try {
-                objectAddress = getMemoryDescriptorOfBytes(objectBytes, this.context);
-            } catch (ControlException e) {
-                if (log.isErrorEnabled()) {
+        log.info("Got {}", entry);
+        if (TEST_MODE) waitForTwoSeconds();
+
+        if (data.get("key").equals(entry.key)) {
+            byte[] objectBytes = entry.value;
+            plasmaClient.release(fullID);
+
+            if (objectBytes != null && objectBytes.length > 0) {
+                final MemoryDescriptor objectAddress;
+                try {
+                    objectAddress = getMemoryDescriptorOfBytes(objectBytes, this.context);
+                } catch (ControlException e) {
                     log.error("An exception occurred getting the objects memory address, aborting GET operation");
+
+                    sendSingleMessage(serialize("500"), 0L, endpoint, scope, worker);
+                    throw e;
                 }
-                sendSingleMessage(serialize("500"), 0L, endpoint, scope, worker);
-                throw e;
-            }
 
-            final ArrayList<Long> requests = new ArrayList<>();
-            requests.add(prepareToSendData(serialize("200"), 0L, endpoint, scope));
-            requests.add(prepareToSendRemoteKey(objectAddress, endpoint));
-            sendData(requests, worker);
+                final ArrayList<Long> requests = new ArrayList<>();
+                requests.add(prepareToSendData(serialize("200"), 0L, endpoint, scope));
+                requests.add(prepareToSendRemoteKey(objectAddress, endpoint));
 
-            final String statusCode = deserialize(receiveData(10, 0L, worker, scope));
-            if (log.isInfoEnabled()) {
+                if (TEST_MODE) waitForTwoSeconds();
+
+                sendData(requests, worker);
+
+                final String statusCode = deserialize(receiveData(10, 0L, worker, scope));
+
                 log.info("Received \"{}\"", statusCode);
+                log.info("Get operation completed \n");
+            } else {
+                log.warn("Object with key \"{}\" was not found in plasma store", data.get("key"));
+                if (TEST_MODE) waitForTwoSeconds();
+
+                sendSingleMessage(serialize("404"), 0L, endpoint, scope, worker);
                 log.info("Get operation completed \n");
             }
         } else {
-            if (log.isWarnEnabled()) {
-                log.warn("Object with key \"{}\" was not found in plasma store", data.get("key"));
-            }
-            sendSingleMessage(serialize("404"), 0L, endpoint, scope, worker);
-            if (log.isInfoEnabled()) {
-                log.info("Get operation completed \n");
-            }
+            //traverseEntriesToFindKey()
         }
     }
 
     private void putOperation(Worker worker, Endpoint endpoint) throws ControlException {
         final MemoryDescriptor descriptor = receiveMemoryDescriptor(0L, worker);
         final byte[] remoteObject = receiveRemoteObject(descriptor, endpoint, worker, scope, resources);
-        if (log.isInfoEnabled()) {
-            log.info("Read \"{}\" from remote buffer", deserialize(remoteObject).toString());
-        }
+
+        log.info("Read \"{}\" from remote buffer", deserialize(remoteObject).toString());
+        if (TEST_MODE) waitForTwoSeconds();
 
         final byte[] metadataSizeBytes = receiveData(Integer.BYTES, 0, worker, scope);
         ByteBuffer byteBuffer = ByteBuffer.wrap(metadataSizeBytes);
         int metadataSize = byteBuffer.getInt();
-        if (log.isInfoEnabled()) {
-            log.info("Received \"{}\"", metadataSize);
-        }
+
+        log.info("Received \"{}\"", metadataSize);
+        if (TEST_MODE) waitForTwoSeconds();
+
         final byte[] metadataBytes = receiveData(metadataSize, 0L, worker, scope);
         HashMap<String, String> metadata = deserialize(metadataBytes);
-        if (log.isInfoEnabled()) {
-            log.info("Received \"{}\"", metadata);
-        }
+
+        log.info("Received \"{}\"", metadata);
+        if (TEST_MODE) waitForTwoSeconds();
 
         byte[] id = new byte[0];
         try {
             id = getMD5Hash(metadata.get("key"));
         } catch (NoSuchAlgorithmException e) {
-            if (log.isErrorEnabled()) {
-                log.error("The MD5 hash algorithm was not found.", e);
-            }
+            log.error("The MD5 hash algorithm was not found.", e);
         }
         final byte[] fullID = ArrayUtils.addAll(id, new byte[4]);
+
         log.info("FullID: {}", fullID);
+        if (TEST_MODE) waitForTwoSeconds();
 
         PlasmaEntry newPlasmaEntry = new PlasmaEntry(metadata.get("key"), remoteObject, new byte[0]);
         byte[] newPlasmaEntryBytes = serialize(newPlasmaEntry);
@@ -366,40 +378,50 @@ public class InfinimumDBServer {
         try {
             saveObjectToPlasma(fullID, newPlasmaEntryBytes, new byte[0]);
             sendSingleMessage(serialize("200"), 0L, endpoint, scope, worker);
-            if (log.isInfoEnabled()) {
-                log.info("Put operation completed \n");
-            }
+
+            log.info("Put operation completed \n");
         } catch (DuplicateObjectException e) {
-            if (log.isWarnEnabled()) {
-                log.warn(e.getMessage());
-            }
+            log.warn(e.getMessage());
+
             PlasmaEntry plasmaEntry = deserialize(plasmaClient.get(fullID, -1, false));
+
+            log.info(plasmaEntry.toString());
             if (plasmaEntry.key.equals(newPlasmaEntry.key)) {
                 sendSingleMessage(serialize("409"), 0L, endpoint, scope, worker);
                 plasmaClient.release(fullID);
-                if (log.isInfoEnabled()) {
-                    log.info("Put operation completed \n");
-                }
+
+                log.info("Put operation completed \n");
             } else {
-                byte[] objectIdWithFreeNextID = traverseEntriesUntilNextIsEmpty(plasmaEntry);
-                PlasmaEntry plasmaEntryWithEmptyNextID = deserialize(plasmaClient.get(objectIdWithFreeNextID, -1, false));
-                String idAsHexString = bytesToHex(objectIdWithFreeNextID);
-                log.info(idAsHexString);
-                String tailEnd = idAsHexString.substring(idAsHexString.length() - 4);
-                log.info(tailEnd);
-                Integer tailEndInt = Integer.valueOf(tailEnd);
-                tailEndInt += 1;
-                String newID = idAsHexString.substring(0, idAsHexString.length() - 4) + tailEndInt;
-                log.info(newID);
-                byte[] newIdBytes = newID.getBytes(StandardCharsets.UTF_8);
-                log.info(bytesToHex(newIdBytes));
-                plasmaClient.release(objectIdWithFreeNextID);
-                plasmaClient.delete(objectIdWithFreeNextID);
-                PlasmaEntry updatedEntry = new PlasmaEntry(plasmaEntryWithEmptyNextID.key, plasmaEntryWithEmptyNextID.value, newIdBytes);
-                saveObjectToPlasma(objectIdWithFreeNextID, serialize(updatedEntry), new byte[0]);
-                saveObjectToPlasma(newIdBytes, newPlasmaEntryBytes, new byte[0]);
+                handleHashCollision(fullID, newPlasmaEntryBytes, plasmaEntry);
+                sendSingleMessage(serialize("200"), 0L, endpoint, scope, worker);
+                log.info("Put operation completed \n");
             }
         }
+    }
+
+    private void handleHashCollision(byte[] fullID, byte[] newPlasmaEntryBytes, PlasmaEntry plasmaEntry) {
+        byte[] objectIdWithFreeNextID;
+        if (plasmaEntry.nextPlasmaID == null || plasmaEntry.nextPlasmaID.length <= 0) {
+            objectIdWithFreeNextID = fullID;
+        } else {
+            objectIdWithFreeNextID = traverseEntriesUntilNextIsEmpty(plasmaEntry);
+        }
+        PlasmaEntry plasmaEntryWithEmptyNextID = deserialize(plasmaClient.get(objectIdWithFreeNextID, -1, false));
+        plasmaClient.release(fullID);
+
+        String idAsHexString = bytesToHex(objectIdWithFreeNextID);
+        String tailEnd = idAsHexString.substring(idAsHexString.length() - 4);
+        Integer tailEndInt = Integer.valueOf(tailEnd);
+        tailEndInt += 1;
+        String newID = idAsHexString.substring(0, idAsHexString.length() - 4) + String.format("%04d", tailEndInt);
+        byte[] newIdBytes = HexFormat.of().parseHex(newID);
+
+        plasmaClient.release(objectIdWithFreeNextID);
+        plasmaClient.delete(objectIdWithFreeNextID);
+        PlasmaEntry updatedEntry = new PlasmaEntry(plasmaEntryWithEmptyNextID.key, plasmaEntryWithEmptyNextID.value, newIdBytes);
+
+        saveObjectToPlasma(objectIdWithFreeNextID, serialize(updatedEntry), new byte[0]);
+        saveObjectToPlasma(newIdBytes, newPlasmaEntryBytes, new byte[0]);
     }
 
     private byte[] traverseEntriesUntilNextIsEmpty(final PlasmaEntry plasmaEntry) {
