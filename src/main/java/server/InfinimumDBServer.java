@@ -282,13 +282,14 @@ public class InfinimumDBServer {
 
         final byte[] dataAsBytes = receiveData(dataSize, 0L, worker, scope);
         HashMap<String, String> data = deserialize(dataAsBytes);
+        String key = data.get("key");
 
         log.info("Received \"{}\"", data);
         if (TEST_MODE) waitForTwoSeconds();
 
         byte[] id = new byte[0];
         try {
-            id = getMD5Hash(data.get("key"));
+            id = getMD5Hash(key);
         } catch (NoSuchAlgorithmException e) {
             log.error("The MD5 hash algorithm was not found.", e);
         }
@@ -302,7 +303,7 @@ public class InfinimumDBServer {
         log.info("Got {}", entry);
         if (TEST_MODE) waitForTwoSeconds();
 
-        if (data.get("key").equals(entry.key)) {
+        if (key.equals(entry.key)) {
             byte[] objectBytes = entry.value;
             plasmaClient.release(fullID);
 
@@ -337,7 +338,54 @@ public class InfinimumDBServer {
                 log.info("Get operation completed \n");
             }
         } else {
-            //traverseEntriesToFindKey()
+            PlasmaEntry correctEntry = traverseEntriesToFindEntryWithKey(entry, key);
+            if (correctEntry != null) {
+                log.info("Found {}", correctEntry);
+                byte[] objectBytes = correctEntry.value;
+                final MemoryDescriptor objectAddress;
+                try {
+                    objectAddress = getMemoryDescriptorOfBytes(objectBytes, this.context);
+                } catch (ControlException e) {
+                    log.error("An exception occurred getting the objects memory address, aborting GET operation");
+
+                    sendSingleMessage(serialize("500"), 0L, endpoint, scope, worker);
+                    throw e;
+                }
+
+                final ArrayList<Long> requests = new ArrayList<>();
+                requests.add(prepareToSendData(serialize("200"), 0L, endpoint, scope));
+                requests.add(prepareToSendRemoteKey(objectAddress, endpoint));
+
+                if (TEST_MODE) waitForTwoSeconds();
+
+                sendData(requests, worker);
+
+                final String statusCode = deserialize(receiveData(10, 0L, worker, scope));
+
+                log.info("Received \"{}\"", statusCode);
+                log.info("Get operation completed \n");
+            } else {
+                log.warn("Object with key \"{}\" was not found in plasma store", data.get("key"));
+                if (TEST_MODE) waitForTwoSeconds();
+
+                sendSingleMessage(serialize("404"), 0L, endpoint, scope, worker);
+                log.info("Get operation completed \n");
+            }
+        }
+    }
+
+    private PlasmaEntry traverseEntriesToFindEntryWithKey(PlasmaEntry startEntry, String key) {
+        PlasmaEntry currentEntry = startEntry;
+        PlasmaEntry nextEntry;
+        while (!key.equals(currentEntry.key) && (currentEntry.nextPlasmaID != null && currentEntry.nextPlasmaID.length > 0)) {
+            log.info(currentEntry.toString());
+            nextEntry = deserialize(plasmaClient.get(currentEntry.nextPlasmaID, 100, false));
+            currentEntry = nextEntry;
+        }
+        if (key.equals(currentEntry.key)) {
+            return currentEntry;
+        } else {
+            return null;
         }
     }
 
