@@ -183,21 +183,20 @@ public class InfinimumDBServer {
     }
 
     private void delOperation(Worker worker, Endpoint endpoint) {
-        final byte[] dataSizeAsBytes = receiveData(Integer.BYTES, 0, worker, scope);
-        ByteBuffer byteBuffer = ByteBuffer.wrap(dataSizeAsBytes);
-        int dataSize = byteBuffer.getInt();
+        // Get key size in bytes
+        final byte[] keySizeBytes = receiveData(Integer.BYTES, 0, worker, scope);
+        ByteBuffer byteBuffer = ByteBuffer.wrap(keySizeBytes);
+        int keySize = byteBuffer.getInt();
+        log.info("Received \"{}\"", keySize);
 
-        log.info("Received \"{}\"", dataSize);
-        if (TEST_MODE) waitForTwoSeconds();
+        // Get key as bytes
+        final byte[] keyBytes = receiveData(keySize, 0L, worker, scope);
+        HashMap<String, String> key = deserialize(keyBytes);
+        log.info("Received \"{}\"", key);
 
-        final byte[] dataAsBytes = receiveData(dataSize, 0L, worker, scope);
-        HashMap<String, String> data = deserialize(dataAsBytes);
+        String keyToDelete = key.get("key");
 
-        log.info("Received \"{}\"", data);
-        if (TEST_MODE) waitForTwoSeconds();
-
-        String keyToDelete = data.get("key");
-
+        // Generate plasma object id
         byte[] id = new byte[0];
         try {
             id = getMD5Hash(keyToDelete);
@@ -205,62 +204,70 @@ public class InfinimumDBServer {
             log.error("The MD5 hash algorithm was not found.", e);
         }
         final byte[] fullID = ArrayUtils.addAll(id, new byte[4]);
+        log.info("FullID: {} of key: {}", fullID, keyToDelete);
 
-        log.info("FullID: {}", fullID);
-        if (TEST_MODE) waitForTwoSeconds();
+        String statusCode = "404";
 
-        byte[] objectBytes = plasmaClient.get(fullID, 100, false);
+        if (plasmaClient.contains(fullID)) {
+            log.info("Entry with id {} exists", fullID);
+            PlasmaEntry entry = deserialize(plasmaClient.get(fullID, 100, false));
 
-        // check if object is present
-        if (objectBytes != null && objectBytes.length > 0) {
-            log.info("Object is present");
+            statusCode = findAndDeleteEntryWithKey(keyToDelete, entry, fullID);
+        }
 
-            PlasmaEntry entry = deserialize(objectBytes);
+        if ("204".equals(statusCode)) {
+            log.info("Object with key \"{}\" found and deleted", keyToDelete);
+            sendSingleMessage(serialize("204"), 0L, endpoint, scope, worker);
+        } else {
+            log.warn("Object with key \"{}\" was not found in plasma store", keyToDelete);
+            sendSingleMessage(serialize("404"), 0L, endpoint, scope, worker);
+        }
+        log.info("Del operation completed \n");
+    }
 
-            log.info("Object: {}", entry);
-            if (TEST_MODE) waitForTwoSeconds();
+    private String findAndDeleteEntryWithKey(String keyToDelete, PlasmaEntry startEntry, byte[] startID) {
+        byte[] nextID = startEntry.nextPlasmaID;
 
-            if (entry.key.equals(keyToDelete)) {
-                log.info("Keys match");
-
-                if (entry.nextPlasmaID != null && entry.nextPlasmaID.length > 0) {
-                    log.info("Next plasma id not empty");
-
-                    //Todo work along chained List
-                } else {
-                    log.info("Next plasma id empty");
-                    log.info("Deleting entry...");
-                    if (TEST_MODE) waitForTwoSeconds();
-
-                    plasmaClient.release(fullID);
-                    plasmaClient.delete(fullID);
-
-                    log.info("Entry deleted");
-                    if (TEST_MODE) waitForTwoSeconds();
-
-                    sendSingleMessage(serialize("204"), 0L, endpoint, scope, worker);
-
-                    log.info("Del operation completed \n");
+        if (keyToDelete.equals(startEntry.key)) {
+            log.info("Keys match");
+            if (plasmaClient.contains(nextID)) {
+                log.info("Entry with next id {} exists", nextID);
+                byte[] nextEntryBytes = plasmaClient.get(nextID, 100, false);
+                PlasmaEntry nextEntry = deserialize(nextEntryBytes);
+                byte[] nextNextID = nextEntry.nextPlasmaID;
+                if (plasmaClient.contains(nextNextID)) {
+                    nextEntry.nextPlasmaID = nextID;
+                    nextEntryBytes = serialize(nextEntry);
                 }
+                log.info("Deleting {} ...", startID);
+                while (plasmaClient.contains(startID)) {
+                    plasmaClient.release(startID);
+                    plasmaClient.delete(startID);
+                }
+                log.info("Entry deleted");
+                plasmaClient.put(startID, nextEntryBytes, new byte[0]);
+                nextEntry.nextPlasmaID = nextNextID;
+                return findAndDeleteEntryWithKey(nextEntry.key, nextEntry, nextID);
             } else {
-                if (entry.nextPlasmaID != null && entry.nextPlasmaID.length > 0) {
-                    log.info("Next plasma id not empty");
-
-                    //Todo search for matching key in chained list
-                } else {
-                    log.warn("Object with key \"{}\" was not found in plasma store", data.get("key"));
-
-                    sendSingleMessage(serialize("404"), 0L, endpoint, scope, worker);
-
-                    log.info("Del operation completed \n");
+                log.info("Entry with next id {} does not exist", nextID);
+                log.info("Deleting {} ...", startID);
+                while (plasmaClient.contains(startID)) {
+                    plasmaClient.release(startID);
+                    plasmaClient.delete(startID);
                 }
+                log.info("Entry deleted");
+                return "204";
             }
         } else {
-            log.warn("Object with key \"{}\" was not found in plasma store", data.get("key"));
-
-            sendSingleMessage(serialize("404"), 0L, endpoint, scope, worker);
-
-            log.info("Del operation completed \n");
+            log.info("Keys do not match");
+            if (plasmaClient.contains(nextID)) {
+                log.info("Entry with next id {} exists", nextID);
+                PlasmaEntry nextEntry = deserialize(plasmaClient.get(nextID, 100, false));
+                return findAndDeleteEntryWithKey(keyToDelete, nextEntry, nextID);
+            } else {
+                log.info("Entry with next id {} does not exist", nextID);
+                return "404";
+            }
         }
     }
 
@@ -420,7 +427,7 @@ public class InfinimumDBServer {
         log.info("FullID: {}", fullID);
         if (TEST_MODE) waitForTwoSeconds();
 
-        PlasmaEntry newPlasmaEntry = new PlasmaEntry(metadata.get("key"), remoteObject, new byte[0]);
+        PlasmaEntry newPlasmaEntry = new PlasmaEntry(metadata.get("key"), remoteObject, new byte[20]);
         byte[] newPlasmaEntryBytes = serialize(newPlasmaEntry);
 
         try {
@@ -440,6 +447,7 @@ public class InfinimumDBServer {
 
                 log.info("Put operation completed \n");
             } else {
+                log.error("test0");
                 handleHashCollision(fullID, newPlasmaEntryBytes, plasmaEntry);
                 sendSingleMessage(serialize("200"), 0L, endpoint, scope, worker);
                 log.info("Put operation completed \n");
@@ -448,40 +456,47 @@ public class InfinimumDBServer {
     }
 
     private void handleHashCollision(byte[] fullID, byte[] newPlasmaEntryBytes, PlasmaEntry plasmaEntry) {
-        byte[] objectIdWithFreeNextID;
-        if (plasmaEntry.nextPlasmaID == null || plasmaEntry.nextPlasmaID.length <= 0) {
-            objectIdWithFreeNextID = fullID;
-        } else {
-            objectIdWithFreeNextID = traverseEntriesUntilNextIsEmpty(plasmaEntry);
-        }
-        PlasmaEntry plasmaEntryWithEmptyNextID = deserialize(plasmaClient.get(objectIdWithFreeNextID, -1, false));
+        byte[] objectIdWithFreeNextID = traverseEntriesUntilNextIsEmpty(plasmaEntry, fullID);
+        log.error("test1");
+        PlasmaEntry plasmaEntryWithEmptyNextID = deserialize(plasmaClient.get(objectIdWithFreeNextID, 100, false));
+        log.error("test2");
         plasmaClient.release(fullID);
 
         String idAsHexString = bytesToHex(objectIdWithFreeNextID);
+        log.info(idAsHexString);
         String tailEnd = idAsHexString.substring(idAsHexString.length() - 4);
+        log.info(tailEnd);
         Integer tailEndInt = Integer.valueOf(tailEnd);
         tailEndInt += 1;
         String newID = idAsHexString.substring(0, idAsHexString.length() - 4) + String.format("%04d", tailEndInt);
+        log.info(newID);
         byte[] newIdBytes = HexFormat.of().parseHex(newID);
 
-        plasmaClient.release(objectIdWithFreeNextID);
-        plasmaClient.delete(objectIdWithFreeNextID);
+        log.info("Deleting {} ...", objectIdWithFreeNextID);
+        while (plasmaClient.contains(objectIdWithFreeNextID)) {
+            plasmaClient.release(objectIdWithFreeNextID);
+            plasmaClient.delete(objectIdWithFreeNextID);
+        }
+        log.info("Entry deleted");
+
         PlasmaEntry updatedEntry = new PlasmaEntry(plasmaEntryWithEmptyNextID.key, plasmaEntryWithEmptyNextID.value, newIdBytes);
 
         saveObjectToPlasma(objectIdWithFreeNextID, serialize(updatedEntry), new byte[0]);
         saveObjectToPlasma(newIdBytes, newPlasmaEntryBytes, new byte[0]);
     }
 
-    private byte[] traverseEntriesUntilNextIsEmpty(final PlasmaEntry plasmaEntry) {
+    private byte[] traverseEntriesUntilNextIsEmpty(final PlasmaEntry plasmaEntry, byte[] fullID) {
+        log.error("test traversal");
+        byte[] currentID = fullID;
         byte[] nextID = plasmaEntry.nextPlasmaID;
-        byte[] lastID = nextID;
-        while (nextID != null && nextID.length > 0) {
-            lastID = nextID;
-            final PlasmaEntry nextPlasmaEntry = deserialize(plasmaClient.get(nextID, -1, false));
+        while (plasmaClient.contains(nextID)) {
+            currentID = nextID;
+            log.error("test traversal loop");
+            final PlasmaEntry nextPlasmaEntry = deserialize(plasmaClient.get(nextID, 100, false));
             nextID = nextPlasmaEntry.nextPlasmaID;
-            plasmaClient.release(nextID);
         }
-        return lastID;
+        log.info("Result ID {}", currentID);
+        return currentID;
     }
 
     private void saveObjectToPlasma(byte[] id, byte[] object, byte[] metadata) throws DuplicateObjectException, PlasmaOutOfMemoryException {

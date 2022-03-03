@@ -12,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Arrays;
 import java.util.List;
 
 @Slf4j
@@ -20,13 +21,19 @@ public class CommunicationUtils {
     private static final boolean TEST_MODE = true;
 
     public static byte[] getMD5Hash(final String text) throws NoSuchAlgorithmException {
+        final MessageDigest messageDigest = MessageDigest.getInstance("MD5");
+        byte[] id = messageDigest.digest(text.getBytes(StandardCharsets.UTF_8));
         if (TEST_MODE) {
             if (text.contains("hash_collision_test")) {
-                return new byte[16];
+                id = new byte[16];
             }
         }
-        final MessageDigest messageDigest = MessageDigest.getInstance("MD5");
-        return messageDigest.digest(text.getBytes(StandardCharsets.UTF_8));
+        // If all bits are zero there are problems with the next entry id's of the plasma entry's
+        if (Arrays.equals(id, new byte[16])) {
+            // Set the first bit to 1
+            id[0] |= 1 << (0);
+        }
+        return id;
     }
 
     public static String bytesToHex(final byte[] bytes) {
