@@ -1,4 +1,4 @@
-package server;
+package utils;
 
 import de.hhu.bsinfo.infinileap.binding.*;
 import de.hhu.bsinfo.infinileap.example.util.CommunicationBarrier;
@@ -9,40 +9,16 @@ import jdk.incubator.foreign.ResourceScope;
 import jdk.incubator.foreign.ValueLayout;
 import lombok.extern.slf4j.Slf4j;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.Arrays;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+
+import static org.apache.commons.lang3.SerializationUtils.deserialize;
+import static org.apache.commons.lang3.SerializationUtils.serialize;
 
 @Slf4j
 public class CommunicationUtils {
-
-    private static final boolean TEST_MODE = true;
-
-    public static byte[] getMD5Hash(final String text) throws NoSuchAlgorithmException {
-        final MessageDigest messageDigest = MessageDigest.getInstance("MD5");
-        byte[] id = messageDigest.digest(text.getBytes(StandardCharsets.UTF_8));
-        if (TEST_MODE) {
-            if (text.contains("hash_collision_test")) {
-                id = new byte[16];
-            }
-        }
-        // If all bits are zero there are problems with the next entry id's of the plasma entry's
-        if (Arrays.equals(id, new byte[16])) {
-            // Set the first bit to 1
-            id[0] |= 1 << (0);
-        }
-        return id;
-    }
-
-    public static String bytesToHex(final byte[] bytes) {
-        final StringBuilder sb = new StringBuilder();
-        for (final byte b : bytes) {
-            sb.append(String.format("%02x", b));
-        }
-        return sb.toString();
-    }
 
     public static MemoryDescriptor getMemoryDescriptorOfBytes(final byte[] object, final Context context) throws ControlException {
         final MemorySegment source = MemorySegment.ofArray(object);
@@ -147,5 +123,38 @@ public class CommunicationUtils {
                 Requests.release(request);
             }
         }
+    }
+
+    public static String receiveKey(Worker worker, ResourceScope scope) {
+        // Get key size in bytes
+        final byte[] keySizeBytes = receiveData(Integer.BYTES, 0, worker, scope);
+        ByteBuffer byteBuffer = ByteBuffer.wrap(keySizeBytes);
+        int keySize = byteBuffer.getInt();
+        log.info("Received \"{}\"", keySize);
+
+        // Get key as bytes
+        final byte[] keyBytes = receiveData(keySize, 0L, worker, scope);
+        HashMap<String, String> key = deserialize(keyBytes);
+        log.info("Received \"{}\"", key);
+
+        return key.get("key");
+    }
+
+    public static void sendObjectAddressAndStatusCode(byte[] objectBytes, Endpoint endpoint, Worker worker, Context context, ResourceScope scope) throws ControlException {
+        // Prepare objectBytes for transmission
+        final MemoryDescriptor objectAddress;
+        try {
+            objectAddress = getMemoryDescriptorOfBytes(objectBytes, context);
+        } catch (ControlException e) {
+            log.error("An exception occurred getting the objects memory address, aborting GET operation");
+            sendSingleMessage(serialize("500"), 0L, endpoint, scope, worker);
+            throw e;
+        }
+
+        // Send status and object address
+        final ArrayList<Long> requests = new ArrayList<>();
+        requests.add(prepareToSendData(serialize("200"), 0L, endpoint, scope));
+        requests.add(prepareToSendRemoteKey(objectAddress, endpoint));
+        sendData(requests, worker);
     }
 }
