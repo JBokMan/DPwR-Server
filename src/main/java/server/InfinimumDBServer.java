@@ -239,22 +239,28 @@ public class InfinimumDBServer {
         PlasmaEntry newPlasmaEntry = new PlasmaEntry(keyToPut, remoteObject, new byte[20]);
         byte[] newPlasmaEntryBytes = serialize(newPlasmaEntry);
 
+        String statusCode = "200";
         try {
             saveObjectToPlasma(plasmaClient, id, newPlasmaEntryBytes, new byte[0]);
-            sendSingleMessage(serialize("200"), 0L, endpoint, worker);
         } catch (DuplicateObjectException e) {
             log.warn(e.getMessage());
             PlasmaEntry plasmaEntry = deserialize(plasmaClient.get(id, -1, false));
             if (plasmaEntry.key.equals(newPlasmaEntry.key)) {
                 log.warn("Object with id: {} has the key: {}", id, keyToPut);
-                sendSingleMessage(serialize("409"), 0L, endpoint, worker);
+                statusCode = "409";
             } else {
-                log.warn("Object with id: {} has not the key: {}", id, keyToPut);
-                saveNewEntryToNextFreeId(plasmaClient, id, newPlasmaEntryBytes, plasmaEntry);
-                sendSingleMessage(serialize("200"), 0L, endpoint, worker);
+                log.info("Object with id: {} has not the key: {}", id, keyToPut);
+                try {
+                    saveNewEntryToNextFreeId(plasmaClient, id, keyToPut, newPlasmaEntryBytes, plasmaEntry);
+                } catch (DuplicateObjectException e2) {
+                    log.warn(e2.getMessage());
+                    statusCode = "409";
+                }
             }
             plasmaClient.release(id);
         }
+
+        sendSingleMessage(serialize(statusCode), 0L, endpoint, worker);
         log.info("Put operation completed \n");
     }
 }

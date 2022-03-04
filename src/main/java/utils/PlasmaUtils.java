@@ -10,6 +10,7 @@ import java.nio.ByteBuffer;
 
 import static org.apache.commons.lang3.SerializationUtils.deserialize;
 import static org.apache.commons.lang3.SerializationUtils.serialize;
+import static utils.HashUtils.bytesToHex;
 import static utils.HashUtils.generateNextIdOfId;
 
 @Slf4j
@@ -29,13 +30,16 @@ public class PlasmaUtils {
         }
     }
 
-    public static byte[] getObjectIdOfNextEntryWithEmptyNextID(PlasmaClient plasmaClient, final PlasmaEntry startEntry, byte[] startId) {
-        //TODO throw error when keyToPut already exists in another entry
+    public static byte[] getObjectIdOfNextEntryWithEmptyNextID(PlasmaClient plasmaClient, final PlasmaEntry startEntry, byte[] startId, String keyToCheck) throws DuplicateObjectException {
         byte[] currentID = startId;
         byte[] nextID = startEntry.nextPlasmaID;
         while (plasmaClient.contains(nextID)) {
             currentID = nextID;
             final PlasmaEntry nextPlasmaEntry = deserialize(plasmaClient.get(nextID, 100, false));
+            log.info(nextPlasmaEntry.key);
+            if (nextPlasmaEntry.key.equals(keyToCheck)) {
+                throw new DuplicateObjectException(bytesToHex(nextID));
+            }
             nextID = nextPlasmaEntry.nextPlasmaID;
         }
         return currentID;
@@ -85,8 +89,8 @@ public class PlasmaUtils {
         }
     }
 
-    public static void saveNewEntryToNextFreeId(PlasmaClient plasmaClient, byte[] fullID, byte[] newPlasmaEntryBytes, PlasmaEntry plasmaEntry) {
-        byte[] objectIdWithFreeNextID = getObjectIdOfNextEntryWithEmptyNextID(plasmaClient, plasmaEntry, fullID);
+    public static void saveNewEntryToNextFreeId(PlasmaClient plasmaClient, byte[] fullID, String keyToCheck, byte[] newPlasmaEntryBytes, PlasmaEntry plasmaEntry) throws DuplicateObjectException {
+        byte[] objectIdWithFreeNextID = getObjectIdOfNextEntryWithEmptyNextID(plasmaClient, plasmaEntry, fullID, keyToCheck);
         log.info("Next object id with free next id is: {}", objectIdWithFreeNextID);
         PlasmaEntry plasmaEntryWithEmptyNextID = deserialize(plasmaClient.get(objectIdWithFreeNextID, 100, false));
 
