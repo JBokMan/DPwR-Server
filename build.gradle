@@ -19,6 +19,15 @@ application {
     mainClass = 'main/Application'
 }
 
+project.startScripts.with {
+    doLast {
+        // The HotSpot VM uses the SIGSEGV signal for its own purposes,
+        // which may interfere with signal handlers installed by the ucx library.
+        // Therefore, we turn off signal handlers with this (ugly) hack.
+        unixScript.text = unixScript.text.replaceFirst('exec ', 'UCX_ERROR_SIGNALS="" exec ')
+    }
+}
+
 java {
     toolchain {
         languageVersion.set(JavaLanguageVersion.of(19))
