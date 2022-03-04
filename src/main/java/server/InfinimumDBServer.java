@@ -229,12 +229,11 @@ public class InfinimumDBServer {
     }
 
     private void putOperation(Worker worker, Endpoint endpoint) throws ControlException, CloseException {
-        final byte[] remoteObject = receiveRemoteObject(endpoint, worker);
-
-        log.info("Read \"{}\" from remote buffer", deserialize(remoteObject).toString());
-
         String keyToPut = receiveKey(worker);
         byte[] id = generateID(keyToPut);
+
+        final byte[] remoteObject = receiveRemoteObject(endpoint, worker);
+        log.info("Read \"{}\" from remote buffer", deserialize(remoteObject).toString());
 
         PlasmaEntry newPlasmaEntry = new PlasmaEntry(keyToPut, remoteObject, new byte[20]);
         byte[] newPlasmaEntryBytes = serialize(newPlasmaEntry);

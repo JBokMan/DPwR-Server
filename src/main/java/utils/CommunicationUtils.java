@@ -11,7 +11,6 @@ import lombok.extern.slf4j.Slf4j;
 import java.lang.ref.Cleaner;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 
 import static org.apache.commons.lang3.SerializationUtils.deserialize;
@@ -110,10 +109,10 @@ public class CommunicationUtils {
 
         // Get key as bytes
         final byte[] keyBytes = receiveData(keySize, 0L, worker);
-        HashMap<String, String> key = deserialize(keyBytes);
+        String key = deserialize(keyBytes);
         log.info("Received \"{}\"", key);
 
-        return key.get("key");
+        return key;
     }
 
     public static void sendObjectAddressAndStatusCode(byte[] objectBytes, Endpoint endpoint, Worker worker, Context context, ResourceScope scope) throws ControlException {
