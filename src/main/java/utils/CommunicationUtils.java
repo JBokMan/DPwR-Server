@@ -26,8 +26,9 @@ public class CommunicationUtils {
         return memoryRegion.descriptor();
     }
 
-    public static Long prepareToSendData(final byte[] data, final long tagID, final Endpoint endpoint, final ResourceScope scope) {
+    public static Long prepareToSendData(final byte[] data, final long tagID, final Endpoint endpoint) {
         log.info("Prepare to send data");
+        final ResourceScope scope = ResourceScope.newConfinedScope(Cleaner.create());
         final int dataSize = data.length;
 
         final MemorySegment source = MemorySegment.ofArray(data);
@@ -51,7 +52,7 @@ public class CommunicationUtils {
 
     public static void sendSingleMessage(final byte[] data, final long tagID, final Endpoint endpoint, final Worker worker) {
         final ResourceScope scope = ResourceScope.newConfinedScope(Cleaner.create());
-        final Long request = prepareToSendData(data, tagID, endpoint, scope);
+        final Long request = prepareToSendData(data, tagID, endpoint);
         sendData(List.of(request), worker);
         scope.close();
     }
@@ -115,7 +116,7 @@ public class CommunicationUtils {
         return key;
     }
 
-    public static void sendObjectAddressAndStatusCode(byte[] objectBytes, Endpoint endpoint, Worker worker, Context context, ResourceScope scope) throws ControlException {
+    public static void sendObjectAddressAndStatusCode(byte[] objectBytes, Endpoint endpoint, Worker worker, Context context) throws ControlException {
         // Prepare objectBytes for transmission
         final MemoryDescriptor objectAddress;
         try {
@@ -128,7 +129,7 @@ public class CommunicationUtils {
 
         // Send status and object address
         final ArrayList<Long> requests = new ArrayList<>();
-        requests.add(prepareToSendData(serialize("200"), 0L, endpoint, scope));
+        requests.add(prepareToSendData(serialize("200"), 0L, endpoint));
         requests.add(prepareToSendRemoteKey(objectAddress, endpoint));
         sendData(requests, worker);
     }
