@@ -3,12 +3,12 @@ package utils;
 import de.hhu.bsinfo.infinileap.binding.*;
 import de.hhu.bsinfo.infinileap.example.util.CommunicationBarrier;
 import de.hhu.bsinfo.infinileap.example.util.Requests;
-import de.hhu.bsinfo.infinileap.util.ResourcePool;
 import jdk.incubator.foreign.MemorySegment;
 import jdk.incubator.foreign.ResourceScope;
 import jdk.incubator.foreign.ValueLayout;
 import lombok.extern.slf4j.Slf4j;
 
+import java.lang.ref.Cleaner;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -28,9 +28,7 @@ public class CommunicationUtils {
     }
 
     public static Long prepareToSendData(final byte[] data, final long tagID, final Endpoint endpoint, final ResourceScope scope) {
-        if (log.isInfoEnabled()) {
-            log.info("Prepare to send data");
-        }
+        log.info("Prepare to send data");
         final int dataSize = data.length;
 
         final MemorySegment source = MemorySegment.ofArray(data);
@@ -46,94 +44,72 @@ public class CommunicationUtils {
     }
 
     public static void sendData(final List<Long> requests, final Worker worker) {
-        if (log.isInfoEnabled()) {
-            log.info("Sending data");
-        }
+        log.info("Sending data");
         for (final Long request : requests) {
             Requests.poll(worker, request);
         }
     }
 
-    public static void sendSingleMessage(final byte[] data, final long tagID, final Endpoint endpoint, final ResourceScope scope, final Worker worker) {
+    public static void sendSingleMessage(final byte[] data, final long tagID, final Endpoint endpoint, final Worker worker) {
+        final ResourceScope scope = ResourceScope.newConfinedScope(Cleaner.create());
         final Long request = prepareToSendData(data, tagID, endpoint, scope);
         sendData(List.of(request), worker);
+        scope.close();
     }
 
-    public static byte[] receiveData(final int size, final long tagID, final Worker worker, final ResourceScope scope) {
+    public static byte[] receiveData(final int size, final long tagID, final Worker worker) {
+        final ResourceScope scope = ResourceScope.newConfinedScope(Cleaner.create());
         final CommunicationBarrier barrier = new CommunicationBarrier();
         final MemorySegment buffer = MemorySegment.allocateNative(size, scope);
 
-        if (log.isInfoEnabled()) {
-            log.info("Receiving message");
-        }
+        log.info("Receiving message");
 
-        final long request = worker.receiveTagged(buffer, Tag.of(tagID), new RequestParameters().setReceiveCallback(barrier::release));
+        RequestParameters requestParameters = new RequestParameters(scope).setReceiveCallback(barrier::release);
+        final long request = worker.receiveTagged(buffer, Tag.of(tagID), requestParameters);
 
-        awaitRequestIfNecessary(request, worker, barrier);
+        awaitRequestIfNecessary(request, worker);
 
-        return buffer.toArray(ValueLayout.JAVA_BYTE);
-    }
-
-    public static MemoryDescriptor receiveMemoryDescriptor(final long tagID, final Worker worker) {
-        final CommunicationBarrier barrier = new CommunicationBarrier();
-        final MemoryDescriptor descriptor = new MemoryDescriptor();
-
-        if (log.isInfoEnabled()) {
-            log.info("Receiving Remote Key");
-        }
-
-        final long request = worker.receiveTagged(descriptor, Tag.of(tagID), new RequestParameters().setReceiveCallback(barrier::release));
-
-        awaitRequestIfNecessary(request, worker, barrier);
-
-        return descriptor;
+        byte[] result = buffer.toArray(ValueLayout.JAVA_BYTE);
+        scope.close();
+        return result;
     }
 
     @SuppressWarnings("PMD.DataflowAnomalyAnalysis")
-    public static byte[] receiveRemoteObject(final MemoryDescriptor descriptor, final Endpoint endpoint, final Worker worker, final ResourceScope scope, final ResourcePool resourcePool) throws ControlException {
-        final CommunicationBarrier barrier = new CommunicationBarrier();
-        RemoteKey remoteKey;
+    public static byte[] receiveRemoteObject(final Endpoint endpoint, final Worker worker) throws ControlException {
+        final ResourceScope scope = ResourceScope.newConfinedScope(Cleaner.create());
 
-        remoteKey = endpoint.unpack(descriptor);
+        final MemoryDescriptor descriptor = new MemoryDescriptor(scope);
+        log.info("Receiving Remote Key");
+        final long request = worker.receiveTagged(descriptor, Tag.of(0L), new RequestParameters(scope));
+        awaitRequestIfNecessary(request, worker);
 
         final MemorySegment targetBuffer = MemorySegment.allocateNative(descriptor.remoteSize(), scope);
-        resourcePool.push(remoteKey);
+        try (final RemoteKey remoteKey = endpoint.unpack(descriptor)) {
+            final long request2 = endpoint.get(targetBuffer, descriptor.remoteAddress(), remoteKey, new RequestParameters(scope));
+            awaitRequestIfNecessary(request2, worker);
+        }
 
-        final long request = endpoint.get(targetBuffer, descriptor.remoteAddress(), remoteKey, new RequestParameters().setReceiveCallback(barrier::release));
-
-        awaitRequestIfNecessary(request, worker, barrier);
-
-        return targetBuffer.toArray(ValueLayout.JAVA_BYTE);
+        byte[] result = targetBuffer.toArray(ValueLayout.JAVA_BYTE);
+        scope.close();
+        return result;
     }
 
-    private static void awaitRequestIfNecessary(final long request, final Worker worker, final CommunicationBarrier barrier) {
-        if (!Status.isError(request)) {
-            if (log.isWarnEnabled()) {
-                log.warn("A request has an error status");
-            }
+    private static void awaitRequestIfNecessary(final long request, final Worker worker) {
+        if (Status.isError(request)) {
+            log.warn("A request has an error status");
         }
-        if (!Status.is(request, Status.OK)) {
-            try {
-                Requests.await(worker, barrier);
-            } catch (InterruptedException e) {
-                if (log.isErrorEnabled()) {
-                    log.error(e.getMessage());
-                }
-            } finally {
-                Requests.release(request);
-            }
-        }
+        Requests.poll(worker, request);
     }
 
-    public static String receiveKey(Worker worker, ResourceScope scope) {
+    public static String receiveKey(Worker worker) {
         // Get key size in bytes
-        final byte[] keySizeBytes = receiveData(Integer.BYTES, 0, worker, scope);
+        final byte[] keySizeBytes = receiveData(Integer.BYTES, 0, worker);
         ByteBuffer byteBuffer = ByteBuffer.wrap(keySizeBytes);
         int keySize = byteBuffer.getInt();
         log.info("Received \"{}\"", keySize);
 
         // Get key as bytes
-        final byte[] keyBytes = receiveData(keySize, 0L, worker, scope);
+        final byte[] keyBytes = receiveData(keySize, 0L, worker);
         HashMap<String, String> key = deserialize(keyBytes);
         log.info("Received \"{}\"", key);
 
@@ -147,7 +123,7 @@ public class CommunicationUtils {
             objectAddress = getMemoryDescriptorOfBytes(objectBytes, context);
         } catch (ControlException e) {
             log.error("An exception occurred getting the objects memory address, aborting GET operation");
-            sendSingleMessage(serialize("500"), 0L, endpoint, scope, worker);
+            sendSingleMessage(serialize("500"), 0L, endpoint, worker);
             throw e;
         }
 

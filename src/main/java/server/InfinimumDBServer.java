@@ -10,6 +10,7 @@ import model.PlasmaEntry;
 import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.arrow.plasma.exceptions.DuplicateObjectException;
 
+import java.lang.ref.Cleaner;
 import java.net.InetSocketAddress;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -31,7 +32,7 @@ public class InfinimumDBServer {
     private transient final String plasmaFilePath;
 
     private transient final ResourcePool resources = new ResourcePool();
-    protected transient final ResourceScope scope = ResourceScope.newSharedScope();
+    protected transient final ResourceScope scope = ResourceScope.newSharedScope(Cleaner.create());
     private static final long DEFAULT_REQUEST_SIZE = 1024;
     private static final ContextParameters.Feature[] FEATURE_SET = {ContextParameters.Feature.TAG, ContextParameters.Feature.RMA, ContextParameters.Feature.WAKEUP, ContextParameters.Feature.AM, ContextParameters.Feature.ATOMIC_32, ContextParameters.Feature.ATOMIC_64, ContextParameters.Feature.STREAM};
     private transient Worker worker;
@@ -127,49 +128,40 @@ public class InfinimumDBServer {
 
         log.info("Listening for new connection requests on {}", listenAddress);
         pushResource(this.worker.createListener(listenerParams));
-
         while (true) {
             Requests.await(this.worker, connectionRequest);
 
             var endpointParameters = new EndpointParameters().setConnectionRequest(connectionRequest.get());
             // ToDo create worker pool and create endpoint from free worker
             try (Endpoint endpoint = this.worker.createEndpoint(endpointParameters)) {
-                String operationName = deserialize(receiveData(OPERATION_MESSAGE_SIZE, 0L, worker, scope));
+                String operationName = deserialize(receiveData(OPERATION_MESSAGE_SIZE, 0L, worker));
                 if (log.isInfoEnabled()) {
                     log.info("Received \"{}\"", operationName);
                 }
                 switch (operationName) {
                     case "PUT" -> {
-                        if (log.isInfoEnabled()) {
-                            log.info("Start PUT operation");
-                        }
+                        log.info("Start PUT operation");
                         try {
                             putOperation(worker, endpoint);
                         } catch (ControlException e) {
-                            if (log.isErrorEnabled()) {
-                                log.error("An exception occurred while receiving the remote key in a PUT operation.", e);
-                            }
+                            log.error("An exception occurred while receiving the remote key in a PUT operation.", e);
+                        } catch (CloseException e) {
+                            e.printStackTrace();
                         }
                     }
                     case "GET" -> {
-                        if (log.isInfoEnabled()) {
-                            log.info("Start GET operation");
-                        }
+                        log.info("Start GET operation");
                         getOperation(worker, endpoint);
                     }
                     case "DEL" -> {
-                        if (log.isInfoEnabled()) {
-                            log.info("Start DEL operation");
-                        }
+                        log.info("Start DEL operation");
                         delOperation(worker, endpoint);
                     }
                     default -> {
                     }
                 }
             } catch (ControlException e) {
-                if (log.isErrorEnabled()) {
-                    log.error("An exception occurred while creating an endpoint.", e);
-                }
+                log.error("An exception occurred while creating an endpoint.", e);
             } finally {
                 connectionRequest.set(null);
             }
@@ -177,7 +169,7 @@ public class InfinimumDBServer {
     }
 
     private void delOperation(Worker worker, Endpoint endpoint) {
-        String keyToDelete = receiveKey(worker, scope);
+        String keyToDelete = receiveKey(worker);
         byte[] id = generateID(keyToDelete);
 
         String statusCode = "404";
@@ -191,16 +183,16 @@ public class InfinimumDBServer {
 
         if ("204".equals(statusCode)) {
             log.info("Object with key \"{}\" found and deleted", keyToDelete);
-            sendSingleMessage(serialize("204"), 0L, endpoint, scope, worker);
+            sendSingleMessage(serialize("204"), 0L, endpoint, worker);
         } else {
             log.warn("Object with key \"{}\" was not found in plasma store", keyToDelete);
-            sendSingleMessage(serialize("404"), 0L, endpoint, scope, worker);
+            sendSingleMessage(serialize("404"), 0L, endpoint, worker);
         }
         log.info("Del operation completed \n");
     }
 
     private void getOperation(Worker worker, Endpoint endpoint) throws ControlException {
-        String keyToGet = receiveKey(worker, scope);
+        String keyToGet = receiveKey(worker);
         byte[] id = generateID(keyToGet);
 
         PlasmaEntry entry = deserialize(plasmaClient.get(id, 1, false));
@@ -213,7 +205,7 @@ public class InfinimumDBServer {
             sendObjectAddressAndStatusCode(objectBytes, endpoint, worker, context, scope);
 
             // Wait for client to signal successful transmission
-            final String statusCode = deserialize(receiveData(10, 0L, worker, scope));
+            final String statusCode = deserialize(receiveData(10, 0L, worker));
             log.info("Received status code \"{}\"", statusCode);
         } else {
             log.warn("Entry with id: {} has not key: {}", id, keyToGet);
@@ -226,23 +218,22 @@ public class InfinimumDBServer {
                 sendObjectAddressAndStatusCode(objectBytes, endpoint, worker, context, scope);
 
                 // Wait for client to signal successful transmission
-                final String statusCode = deserialize(receiveData(10, 0L, worker, scope));
+                final String statusCode = deserialize(receiveData(10, 0L, worker));
                 log.info("Received status code \"{}\"", statusCode);
             } else {
                 log.warn("Not found entry with key: {}", keyToGet);
-                sendSingleMessage(serialize("404"), 0L, endpoint, scope, worker);
+                sendSingleMessage(serialize("404"), 0L, endpoint, worker);
             }
         }
         log.info("Get operation completed \n");
     }
 
-    private void putOperation(Worker worker, Endpoint endpoint) throws ControlException {
-        final MemoryDescriptor descriptor = receiveMemoryDescriptor(0L, worker);
-        final byte[] remoteObject = receiveRemoteObject(descriptor, endpoint, worker, scope, resources);
+    private void putOperation(Worker worker, Endpoint endpoint) throws ControlException, CloseException {
+        final byte[] remoteObject = receiveRemoteObject(endpoint, worker);
 
         log.info("Read \"{}\" from remote buffer", deserialize(remoteObject).toString());
 
-        String keyToPut = receiveKey(worker, scope);
+        String keyToPut = receiveKey(worker);
         byte[] id = generateID(keyToPut);
 
         PlasmaEntry newPlasmaEntry = new PlasmaEntry(keyToPut, remoteObject, new byte[20]);
@@ -250,17 +241,17 @@ public class InfinimumDBServer {
 
         try {
             saveObjectToPlasma(plasmaClient, id, newPlasmaEntryBytes, new byte[0]);
-            sendSingleMessage(serialize("200"), 0L, endpoint, scope, worker);
+            sendSingleMessage(serialize("200"), 0L, endpoint, worker);
         } catch (DuplicateObjectException e) {
             log.warn(e.getMessage());
             PlasmaEntry plasmaEntry = deserialize(plasmaClient.get(id, -1, false));
             if (plasmaEntry.key.equals(newPlasmaEntry.key)) {
                 log.warn("Object with id: {} has the key: {}", id, keyToPut);
-                sendSingleMessage(serialize("409"), 0L, endpoint, scope, worker);
+                sendSingleMessage(serialize("409"), 0L, endpoint, worker);
             } else {
                 log.warn("Object with id: {} has not the key: {}", id, keyToPut);
                 saveNewEntryToNextFreeId(plasmaClient, id, newPlasmaEntryBytes, plasmaEntry);
-                sendSingleMessage(serialize("200"), 0L, endpoint, scope, worker);
+                sendSingleMessage(serialize("200"), 0L, endpoint, worker);
             }
             plasmaClient.release(id);
         }
