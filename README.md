@@ -40,6 +40,11 @@
 9. run ```sudo make VERBOSE=1 -j4; sudo make install```
 10. run ```sudo cp -a release/. /usr/lib```
 
+## How to run the server
+
+1. run ```./gradlew installDist```
+2. run ```./build/install/InfinimumDB-Server/bin/InfinimumDB-Server```
+
 ## How to gracefully shut down the server
 
 1. Find the PID with for example ```ps -A | grep java```
