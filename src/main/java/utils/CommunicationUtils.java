@@ -19,10 +19,9 @@ import static org.apache.commons.lang3.SerializationUtils.serialize;
 @Slf4j
 public class CommunicationUtils {
 
-    public static MemoryDescriptor getMemoryDescriptorOfBytes(final byte[] object, final Context context) throws ControlException {
-        final MemorySegment source = MemorySegment.ofArray(object);
-        final MemoryRegion memoryRegion = context.allocateMemory(object.length);
-        memoryRegion.segment().copyFrom(source);
+    public static MemoryDescriptor getMemoryDescriptorOfByteBuffer(final ByteBuffer object, final Context context) throws ControlException {
+        final MemorySegment source = MemorySegment.ofByteBuffer(object);
+        final MemoryRegion memoryRegion = context.mapMemory(source);
         return memoryRegion.descriptor();
     }
 
@@ -116,11 +115,11 @@ public class CommunicationUtils {
         return key;
     }
 
-    public static void sendObjectAddressAndStatusCode(byte[] objectBytes, Endpoint endpoint, Worker worker, Context context) throws ControlException {
+    public static void sendObjectAddressAndStatusCode(ByteBuffer objectBuffer, Endpoint endpoint, Worker worker, Context context) throws ControlException {
         // Prepare objectBytes for transmission
         final MemoryDescriptor objectAddress;
         try {
-            objectAddress = getMemoryDescriptorOfBytes(objectBytes, context);
+            objectAddress = getMemoryDescriptorOfByteBuffer(objectBuffer, context);
         } catch (ControlException e) {
             log.error("An exception occurred getting the objects memory address, aborting GET operation");
             sendSingleMessage(serialize("500"), 0L, endpoint, worker);

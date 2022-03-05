@@ -10,6 +10,7 @@ import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.arrow.plasma.exceptions.DuplicateObjectException;
 
 import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.apache.commons.lang3.SerializationUtils.deserialize;
@@ -192,27 +193,26 @@ public class InfinimumDBServer {
         String keyToGet = receiveKey(worker);
         byte[] id = generateID(keyToGet);
 
-        PlasmaEntry entry = deserialize(plasmaClient.get(id, 1, false));
+        ByteBuffer objectBuffer = plasmaClient.getObjAsByteBuffer(id, 1, false);
+        PlasmaEntry entry = getPlasmaEntryFromBuffer(objectBuffer);
 
         if (keyToGet.equals(entry.key)) {
             log.info("Entry with id: {} has key: {}", id, keyToGet);
-            byte[] objectBytes = entry.value;
-            plasmaClient.release(id);
 
-            sendObjectAddressAndStatusCode(objectBytes, endpoint, worker, context);
+            sendObjectAddressAndStatusCode(objectBuffer, endpoint, worker, context);
 
             // Wait for client to signal successful transmission
             final String statusCode = deserialize(receiveData(10, 0L, worker));
+            plasmaClient.release(id);
             log.info("Received status code \"{}\"", statusCode);
         } else {
             log.warn("Entry with id: {} has not key: {}", id, keyToGet);
-            PlasmaEntry correctEntry = findEntryWithKey(plasmaClient, keyToGet, entry);
+            ByteBuffer bufferOfCorrectEntry = findEntryWithKey(plasmaClient, keyToGet, objectBuffer);
 
-            if (correctEntry != null) {
+            if (bufferOfCorrectEntry != null) {
                 log.info("Found entry with key: {}", keyToGet);
-                byte[] objectBytes = correctEntry.value;
 
-                sendObjectAddressAndStatusCode(objectBytes, endpoint, worker, context);
+                sendObjectAddressAndStatusCode(bufferOfCorrectEntry, endpoint, worker, context);
 
                 // Wait for client to signal successful transmission
                 final String statusCode = deserialize(receiveData(10, 0L, worker));

@@ -16,15 +16,18 @@ import static utils.HashUtils.generateNextIdOfId;
 @Slf4j
 public class PlasmaUtils {
 
-    public static PlasmaEntry findEntryWithKey(PlasmaClient plasmaClient, String key, PlasmaEntry startEntry) {
-        PlasmaEntry currentEntry = startEntry;
+    public static ByteBuffer findEntryWithKey(PlasmaClient plasmaClient, String key, ByteBuffer startBuffer) {
+        ByteBuffer currentBuffer = startBuffer;
+        PlasmaEntry currentEntry = getPlasmaEntryFromBuffer(currentBuffer);
+
         byte[] nextID = currentEntry.nextPlasmaID;
         while (!key.equals(currentEntry.key) && plasmaClient.contains(nextID)) {
-            currentEntry = deserialize(plasmaClient.get(nextID, 100, false));
+            currentBuffer = plasmaClient.getObjAsByteBuffer(nextID, 100, false);
+            currentEntry = getPlasmaEntryFromBuffer(currentBuffer);
             nextID = currentEntry.nextPlasmaID;
         }
         if (key.equals(currentEntry.key)) {
-            return currentEntry;
+            return currentBuffer;
         } else {
             return null;
         }
@@ -111,5 +114,12 @@ public class PlasmaUtils {
             plasmaClient.delete(id);
         }
         log.info("Entry deleted");
+    }
+
+    public static PlasmaEntry getPlasmaEntryFromBuffer(ByteBuffer objectBuffer) {
+        byte[] data = new byte[objectBuffer.remaining()];
+        objectBuffer.get(data);
+        objectBuffer.position(0);
+        return deserialize(data);
     }
 }
