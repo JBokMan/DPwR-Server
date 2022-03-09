@@ -8,6 +8,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.HexFormat;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 public class HashUtils {
@@ -32,6 +33,13 @@ public class HashUtils {
         if (TEST_MODE) {
             if (text.contains("hash_collision_test")) {
                 id = new byte[16];
+            }
+            if (text.contains("timeout_test")) {
+                try {
+                    TimeUnit.SECONDS.sleep(2);
+                } catch (InterruptedException e) {
+                    log.error(e.getMessage());
+                }
             }
         }
         // If all bits are zero there are problems with the next entry id's of the plasma entry's
