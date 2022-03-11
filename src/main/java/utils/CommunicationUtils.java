@@ -82,10 +82,8 @@ public class CommunicationUtils {
     }
 
     public static void sendSingleMessage(final byte[] data, final long tagID, final Endpoint endpoint, final Worker worker, final int timeoutMs) throws TimeoutException {
-        final ResourceScope scope = ResourceScope.newConfinedScope(Cleaner.create());
         final Long request = prepareToSendData(data, tagID, endpoint);
         sendData(List.of(request), worker, timeoutMs);
-        scope.close();
     }
 
     public static byte[] receiveData(final int size, final long tagID, final Worker worker, final int timeoutMs) throws TimeoutException {
