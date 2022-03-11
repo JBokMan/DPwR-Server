@@ -16,13 +16,13 @@ import static utils.HashUtils.generateNextIdOfId;
 @Slf4j
 public class PlasmaUtils {
 
-    public static ByteBuffer findEntryWithKey(PlasmaClient plasmaClient, String key, ByteBuffer startBuffer) {
+    public static ByteBuffer findEntryWithKey(PlasmaClient plasmaClient, String key, ByteBuffer startBuffer, int plasmaTimeoutMs) {
         ByteBuffer currentBuffer = startBuffer;
         PlasmaEntry currentEntry = getPlasmaEntryFromBuffer(currentBuffer);
 
         byte[] nextID = currentEntry.nextPlasmaID;
         while (!key.equals(currentEntry.key) && plasmaClient.contains(nextID)) {
-            currentBuffer = plasmaClient.getObjAsByteBuffer(nextID, 100, false);
+            currentBuffer = plasmaClient.getObjAsByteBuffer(nextID, plasmaTimeoutMs, false);
             currentEntry = getPlasmaEntryFromBuffer(currentBuffer);
             nextID = currentEntry.nextPlasmaID;
         }
@@ -33,12 +33,12 @@ public class PlasmaUtils {
         }
     }
 
-    public static byte[] getObjectIdOfNextEntryWithEmptyNextID(PlasmaClient plasmaClient, final PlasmaEntry startEntry, byte[] startId, String keyToCheck) throws DuplicateObjectException {
+    public static byte[] getObjectIdOfNextEntryWithEmptyNextID(PlasmaClient plasmaClient, final PlasmaEntry startEntry, byte[] startId, String keyToCheck, int plasmaTimeoutMs) throws DuplicateObjectException {
         byte[] currentID = startId;
         byte[] nextID = startEntry.nextPlasmaID;
         while (plasmaClient.contains(nextID)) {
             currentID = nextID;
-            final PlasmaEntry nextPlasmaEntry = deserialize(plasmaClient.get(nextID, 100, false));
+            final PlasmaEntry nextPlasmaEntry = deserialize(plasmaClient.get(nextID, plasmaTimeoutMs, false));
             log.info(nextPlasmaEntry.key);
             if (nextPlasmaEntry.key.equals(keyToCheck)) {
                 throw new DuplicateObjectException(bytesToHex(nextID));
@@ -56,14 +56,14 @@ public class PlasmaUtils {
         plasmaClient.seal(id);
     }
 
-    public static String findAndDeleteEntryWithKey(PlasmaClient plasmaClient, String keyToDelete, PlasmaEntry startEntry, byte[] startID) {
+    public static String findAndDeleteEntryWithKey(PlasmaClient plasmaClient, String keyToDelete, PlasmaEntry startEntry, byte[] startID, int plasmaTimeoutMs) {
         byte[] nextID = startEntry.nextPlasmaID;
 
         if (keyToDelete.equals(startEntry.key)) {
             log.info("Keys match");
             if (plasmaClient.contains(nextID)) {
                 log.info("Entry with next id {} exists", nextID);
-                byte[] nextEntryBytes = plasmaClient.get(nextID, 100, false);
+                byte[] nextEntryBytes = plasmaClient.get(nextID, plasmaTimeoutMs, false);
                 PlasmaEntry nextEntry = deserialize(nextEntryBytes);
                 byte[] nextNextID = nextEntry.nextPlasmaID;
                 if (plasmaClient.contains(nextNextID)) {
@@ -73,7 +73,7 @@ public class PlasmaUtils {
                 deleteById(startID, plasmaClient);
                 plasmaClient.put(startID, nextEntryBytes, new byte[0]);
                 nextEntry.nextPlasmaID = nextNextID;
-                return findAndDeleteEntryWithKey(plasmaClient, nextEntry.key, nextEntry, nextID);
+                return findAndDeleteEntryWithKey(plasmaClient, nextEntry.key, nextEntry, nextID, plasmaTimeoutMs);
             } else {
                 log.info("Entry with next id {} does not exist", nextID);
                 deleteById(startID, plasmaClient);
@@ -83,19 +83,21 @@ public class PlasmaUtils {
             log.info("Keys do not match");
             if (plasmaClient.contains(nextID)) {
                 log.info("Entry with next id {} exists", nextID);
-                PlasmaEntry nextEntry = deserialize(plasmaClient.get(nextID, 100, false));
-                return findAndDeleteEntryWithKey(plasmaClient, keyToDelete, nextEntry, nextID);
+                PlasmaEntry nextEntry = deserialize(plasmaClient.get(nextID, plasmaTimeoutMs, false));
+                plasmaClient.release(startID);
+                return findAndDeleteEntryWithKey(plasmaClient, keyToDelete, nextEntry, nextID, plasmaTimeoutMs);
             } else {
+                plasmaClient.release(startID);
                 log.info("Entry with next id {} does not exist", nextID);
                 return "404";
             }
         }
     }
 
-    public static void saveNewEntryToNextFreeId(PlasmaClient plasmaClient, byte[] fullID, String keyToCheck, byte[] newPlasmaEntryBytes, PlasmaEntry plasmaEntry) throws DuplicateObjectException {
-        byte[] objectIdWithFreeNextID = getObjectIdOfNextEntryWithEmptyNextID(plasmaClient, plasmaEntry, fullID, keyToCheck);
+    public static void saveNewEntryToNextFreeId(PlasmaClient plasmaClient, byte[] fullID, String keyToCheck, byte[] newPlasmaEntryBytes, PlasmaEntry plasmaEntry, int plasmaTimeoutMs) throws DuplicateObjectException {
+        byte[] objectIdWithFreeNextID = getObjectIdOfNextEntryWithEmptyNextID(plasmaClient, plasmaEntry, fullID, keyToCheck, plasmaTimeoutMs);
         log.info("Next object id with free next id is: {}", objectIdWithFreeNextID);
-        PlasmaEntry plasmaEntryWithEmptyNextID = deserialize(plasmaClient.get(objectIdWithFreeNextID, 100, false));
+        PlasmaEntry plasmaEntryWithEmptyNextID = deserialize(plasmaClient.get(objectIdWithFreeNextID, plasmaTimeoutMs, false));
 
         byte[] id = generateNextIdOfId(objectIdWithFreeNextID);
 

@@ -36,9 +36,9 @@ public class InfinimumDBServer {
     private transient final ResourcePool resources = new ResourcePool();
     private static final long DEFAULT_REQUEST_SIZE = 1024;
     private static final ContextParameters.Feature[] FEATURE_SET = {ContextParameters.Feature.TAG, ContextParameters.Feature.RMA, ContextParameters.Feature.WAKEUP, ContextParameters.Feature.AM, ContextParameters.Feature.ATOMIC_32, ContextParameters.Feature.ATOMIC_64, ContextParameters.Feature.STREAM};
-    private static final int CONNECTION_TIMEOUT_MS = 100;
+    private static final int CONNECTION_TIMEOUT_MS = 500;
+    private static final int PLASMA_TIMEOUT_MS = 500;
     private transient Worker worker;
-    private transient Listener listener;
     private transient Context context;
     private transient final InetSocketAddress listenAddress;
 
@@ -120,7 +120,7 @@ public class InfinimumDBServer {
         var listenerParams = new ListenerParameters().setListenAddress(listenAddress).setConnectionHandler(connectionRequest::set);
 
         log.info("Listening for new connection requests on {}", listenAddress);
-        this.listener = pushResource(this.worker.createListener(listenerParams));
+        pushResource(this.worker.createListener(listenerParams));
         while (true) {
             Requests.await(this.worker, connectionRequest);
             var endpointParameters = new EndpointParameters().setConnectionRequest(connectionRequest.get()).setPeerErrorHandlingMode();
@@ -167,14 +167,14 @@ public class InfinimumDBServer {
             saveObjectToPlasma(plasmaClient, id, newPlasmaEntryBytes, new byte[0]);
         } catch (DuplicateObjectException e) {
             log.warn(e.getMessage());
-            PlasmaEntry plasmaEntry = deserialize(plasmaClient.get(id, -1, false));
+            PlasmaEntry plasmaEntry = deserialize(plasmaClient.get(id, PLASMA_TIMEOUT_MS, false));
             if (plasmaEntry.key.equals(newPlasmaEntry.key)) {
                 log.warn("Object with id: {} has the key: {}", id, keyToPut);
                 statusCode = "409";
             } else {
                 log.info("Object with id: {} has not the key: {}", id, keyToPut);
                 try {
-                    saveNewEntryToNextFreeId(plasmaClient, id, keyToPut, newPlasmaEntryBytes, plasmaEntry);
+                    saveNewEntryToNextFreeId(plasmaClient, id, keyToPut, newPlasmaEntryBytes, plasmaEntry, PLASMA_TIMEOUT_MS);
                 } catch (DuplicateObjectException e2) {
                     log.warn(e2.getMessage());
                     statusCode = "409";
@@ -189,7 +189,7 @@ public class InfinimumDBServer {
         String keyToGet = receiveKey(worker, CONNECTION_TIMEOUT_MS);
         byte[] id = generateID(keyToGet);
 
-        ByteBuffer objectBuffer = plasmaClient.getObjAsByteBuffer(id, 1, false);
+        ByteBuffer objectBuffer = plasmaClient.getObjAsByteBuffer(id, PLASMA_TIMEOUT_MS, false);
         PlasmaEntry entry = getPlasmaEntryFromBuffer(objectBuffer);
 
         if (keyToGet.equals(entry.key)) {
@@ -203,7 +203,7 @@ public class InfinimumDBServer {
             log.info("Received status code \"{}\"", statusCode);
         } else {
             log.warn("Entry with id: {} has not key: {}", id, keyToGet);
-            ByteBuffer bufferOfCorrectEntry = findEntryWithKey(plasmaClient, keyToGet, objectBuffer);
+            ByteBuffer bufferOfCorrectEntry = findEntryWithKey(plasmaClient, keyToGet, objectBuffer, PLASMA_TIMEOUT_MS);
 
             if (bufferOfCorrectEntry != null) {
                 log.info("Found entry with key: {}", keyToGet);
@@ -229,9 +229,9 @@ public class InfinimumDBServer {
 
         if (plasmaClient.contains(id)) {
             log.info("Entry with id {} exists", id);
-            PlasmaEntry entry = deserialize(plasmaClient.get(id, 100, false));
+            PlasmaEntry entry = deserialize(plasmaClient.get(id, PLASMA_TIMEOUT_MS, false));
 
-            statusCode = findAndDeleteEntryWithKey(plasmaClient, keyToDelete, entry, id);
+            statusCode = findAndDeleteEntryWithKey(plasmaClient, keyToDelete, entry, id, PLASMA_TIMEOUT_MS);
         }
 
         if ("204".equals(statusCode)) {
