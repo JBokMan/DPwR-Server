@@ -24,6 +24,7 @@ public class PlasmaUtils {
         while (!key.equals(currentEntry.key) && plasmaClient.contains(nextID)) {
             currentBuffer = plasmaClient.getObjAsByteBuffer(nextID, plasmaTimeoutMs, false);
             currentEntry = getPlasmaEntryFromBuffer(currentBuffer);
+            plasmaClient.release(nextID);
             nextID = currentEntry.nextPlasmaID;
         }
         if (key.equals(currentEntry.key)) {
@@ -39,6 +40,7 @@ public class PlasmaUtils {
         while (plasmaClient.contains(nextID)) {
             currentID = nextID;
             final PlasmaEntry nextPlasmaEntry = deserialize(plasmaClient.get(nextID, plasmaTimeoutMs, false));
+            plasmaClient.release(nextID);
             log.info(nextPlasmaEntry.key);
             if (nextPlasmaEntry.key.equals(keyToCheck)) {
                 throw new DuplicateObjectException(bytesToHex(nextID));

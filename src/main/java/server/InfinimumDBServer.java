@@ -35,13 +35,13 @@ public class InfinimumDBServer {
     private transient final ResourcePool resources = new ResourcePool();
     private static final long DEFAULT_REQUEST_SIZE = 1024;
     private static final ContextParameters.Feature[] FEATURE_SET = {ContextParameters.Feature.TAG, ContextParameters.Feature.RMA, ContextParameters.Feature.WAKEUP, ContextParameters.Feature.AM, ContextParameters.Feature.ATOMIC_32, ContextParameters.Feature.ATOMIC_64, ContextParameters.Feature.STREAM};
-    private static final int CONNECTION_TIMEOUT_MS = 500;
+    private static final int CONNECTION_TIMEOUT_MS = 750;
     private static final int PLASMA_TIMEOUT_MS = 500;
     private transient Worker worker;
     private transient Context context;
     private transient final InetSocketAddress listenAddress;
 
-    public InfinimumDBServer(String plasmaFilePath, String listenAddress, Integer listenPort) {
+    public InfinimumDBServer(final String plasmaFilePath, final String listenAddress, final Integer listenPort) {
         this.listenAddress = new InetSocketAddress(listenAddress, listenPort);
         this.plasmaFilePath = plasmaFilePath;
         connectPlasma();
@@ -167,6 +167,7 @@ public class InfinimumDBServer {
         } catch (DuplicateObjectException e) {
             log.warn(e.getMessage());
             final PlasmaEntry plasmaEntry = deserialize(plasmaClient.get(id, PLASMA_TIMEOUT_MS, false));
+            plasmaClient.release(id);
             if (plasmaEntry.key.equals(newPlasmaEntry.key)) {
                 log.warn("Object with id: {} has the key: {}", id, keyToPut);
                 statusCode = "409";
