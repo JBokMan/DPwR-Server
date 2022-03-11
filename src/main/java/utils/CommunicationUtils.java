@@ -1,8 +1,8 @@
 package utils;
 
 import de.hhu.bsinfo.infinileap.binding.*;
-import de.hhu.bsinfo.infinileap.example.util.CommunicationBarrier;
 import de.hhu.bsinfo.infinileap.example.util.Requests;
+import de.hhu.bsinfo.infinileap.util.CloseException;
 import jdk.incubator.foreign.MemorySegment;
 import jdk.incubator.foreign.ResourceScope;
 import jdk.incubator.foreign.ValueLayout;
@@ -22,22 +22,22 @@ import static org.apache.commons.lang3.SerializationUtils.serialize;
 @Slf4j
 public class CommunicationUtils {
 
-    public static MemoryDescriptor getMemoryDescriptorOfByteBuffer(final ByteBuffer object, final Context context) throws ControlException {
+    public static MemoryDescriptor getMemoryDescriptorOfByteBuffer(final ByteBuffer object, final Context context) throws ControlException, CloseException {
         final MemorySegment source = MemorySegment.ofByteBuffer(object);
-        final MemoryRegion memoryRegion = context.mapMemory(source);
-        return memoryRegion.descriptor();
+        try (final MemoryRegion memoryRegion = context.mapMemory(source)) {
+            return memoryRegion.descriptor();
+        }
     }
 
-    public static Long prepareToSendData(final byte[] data, final long tagID, final Endpoint endpoint) {
+    public static Long prepareToSendData(final byte[] data, final Endpoint endpoint, final ResourceScope scope) {
         log.info("Prepare to send data");
-        final ResourceScope scope = ResourceScope.newConfinedScope(Cleaner.create());
         final int dataSize = data.length;
 
         final MemorySegment source = MemorySegment.ofArray(data);
         final MemorySegment buffer = MemorySegment.allocateNative(dataSize, scope);
         buffer.copyFrom(source);
 
-        return endpoint.sendTagged(buffer, Tag.of(tagID), new RequestParameters());
+        return endpoint.sendTagged(buffer, Tag.of(0L), new RequestParameters());
     }
 
     public static Long prepareToSendRemoteKey(final MemoryDescriptor descriptor, final Endpoint endpoint) {
@@ -77,27 +77,23 @@ public class CommunicationUtils {
             }
         }
         if (timeoutHappened) {
-            throw new TimeoutException();
+            throw new TimeoutException("A timeout occurred while sending data");
         }
     }
 
-    public static void sendSingleMessage(final byte[] data, final long tagID, final Endpoint endpoint, final Worker worker, final int timeoutMs) throws TimeoutException {
-        final Long request = prepareToSendData(data, tagID, endpoint);
-        sendData(List.of(request), worker, timeoutMs);
+    public static void sendSingleMessage(final byte[] data, final Endpoint endpoint, final Worker worker, final int timeoutMs) throws TimeoutException {
+        try (final ResourceScope scope = ResourceScope.newConfinedScope(Cleaner.create())) {
+            final Long request = prepareToSendData(data, endpoint, scope);
+            sendData(List.of(request), worker, timeoutMs);
+        }
     }
 
-    public static byte[] receiveData(final int size, final long tagID, final Worker worker, final int timeoutMs) throws TimeoutException {
+    public static byte[] receiveData(final int size, final Worker worker, final int timeoutMs) throws TimeoutException {
+        log.info("Receiving message");
         try (final ResourceScope scope = ResourceScope.newConfinedScope(Cleaner.create())) {
-            final CommunicationBarrier barrier = new CommunicationBarrier();
             final MemorySegment buffer = MemorySegment.allocateNative(size, scope);
-
-            log.info("Receiving message");
-
-            RequestParameters requestParameters = new RequestParameters(scope).setReceiveCallback(barrier::release);
-            final long request = worker.receiveTagged(buffer, Tag.of(tagID), requestParameters);
-
+            final long request = worker.receiveTagged(buffer, Tag.of(0L), new RequestParameters(scope));
             awaitRequestIfNecessary(request, worker, timeoutMs);
-
             return buffer.toArray(ValueLayout.JAVA_BYTE);
         }
     }
@@ -142,42 +138,44 @@ public class CommunicationUtils {
         }
         if (state(request) != Requests.State.COMPLETE) {
             worker.cancelRequest(request);
-            throw new TimeoutException();
+            throw new TimeoutException("A timeout occurred while receiving data");
         } else {
             Requests.release(request);
         }
     }
 
-    public static String receiveKey(Worker worker, final int timeoutMs) throws TimeoutException {
+    public static String receiveKey(final Worker worker, final int timeoutMs) throws TimeoutException {
         // Get key size in bytes
-        final byte[] keySizeBytes = receiveData(Integer.BYTES, 0, worker, timeoutMs);
-        ByteBuffer byteBuffer = ByteBuffer.wrap(keySizeBytes);
+        final byte[] keySizeBytes = receiveData(Integer.BYTES, worker, timeoutMs);
+        final ByteBuffer byteBuffer = ByteBuffer.wrap(keySizeBytes);
         int keySize = byteBuffer.getInt();
         log.info("Received \"{}\"", keySize);
 
         // Get key as bytes
-        final byte[] keyBytes = receiveData(keySize, 0L, worker, timeoutMs);
-        String key = deserialize(keyBytes);
+        final byte[] keyBytes = receiveData(keySize, worker, timeoutMs);
+        final String key = deserialize(keyBytes);
         log.info("Received \"{}\"", key);
 
         return key;
     }
 
-    public static void sendObjectAddressAndStatusCode(ByteBuffer objectBuffer, Endpoint endpoint, Worker worker, Context context, final int timeoutMs) throws ControlException, TimeoutException {
+    public static void sendObjectAddressAndStatusCode(final ByteBuffer objectBuffer, final Endpoint endpoint, final Worker worker, final Context context, final int timeoutMs) throws ControlException, TimeoutException, CloseException {
         // Prepare objectBytes for transmission
         final MemoryDescriptor objectAddress;
         try {
             objectAddress = getMemoryDescriptorOfByteBuffer(objectBuffer, context);
-        } catch (ControlException e) {
+        } catch (ControlException | CloseException e) {
             log.error("An exception occurred getting the objects memory address, aborting GET operation");
-            sendSingleMessage(serialize("500"), 0L, endpoint, worker, timeoutMs);
+            sendSingleMessage(serialize("500"), endpoint, worker, timeoutMs);
             throw e;
         }
 
         // Send status and object address
         final ArrayList<Long> requests = new ArrayList<>();
-        requests.add(prepareToSendData(serialize("200"), 0L, endpoint));
-        requests.add(prepareToSendRemoteKey(objectAddress, endpoint));
-        sendData(requests, worker, timeoutMs);
+        try (final ResourceScope scope = ResourceScope.newConfinedScope(Cleaner.create())) {
+            requests.add(prepareToSendData(serialize("200"), endpoint, scope));
+            requests.add(prepareToSendRemoteKey(objectAddress, endpoint));
+            sendData(requests, worker, timeoutMs);
+        }
     }
 }

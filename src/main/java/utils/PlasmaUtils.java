@@ -16,7 +16,7 @@ import static utils.HashUtils.generateNextIdOfId;
 @Slf4j
 public class PlasmaUtils {
 
-    public static ByteBuffer findEntryWithKey(PlasmaClient plasmaClient, String key, ByteBuffer startBuffer, int plasmaTimeoutMs) {
+    public static ByteBuffer findEntryWithKey(final PlasmaClient plasmaClient, final String key, final ByteBuffer startBuffer, final int plasmaTimeoutMs) {
         ByteBuffer currentBuffer = startBuffer;
         PlasmaEntry currentEntry = getPlasmaEntryFromBuffer(currentBuffer);
 
@@ -33,7 +33,7 @@ public class PlasmaUtils {
         }
     }
 
-    public static byte[] getObjectIdOfNextEntryWithEmptyNextID(PlasmaClient plasmaClient, final PlasmaEntry startEntry, byte[] startId, String keyToCheck, int plasmaTimeoutMs) throws DuplicateObjectException {
+    public static byte[] getObjectIdOfNextEntryWithEmptyNextID(final PlasmaClient plasmaClient, final PlasmaEntry startEntry, final byte[] startId, final String keyToCheck, final int plasmaTimeoutMs) throws DuplicateObjectException {
         byte[] currentID = startId;
         byte[] nextID = startEntry.nextPlasmaID;
         while (plasmaClient.contains(nextID)) {
@@ -48,23 +48,23 @@ public class PlasmaUtils {
         return currentID;
     }
 
-    public static void saveObjectToPlasma(PlasmaClient plasmaClient, byte[] id, byte[] object, byte[] metadata) throws DuplicateObjectException, PlasmaOutOfMemoryException {
-        ByteBuffer byteBuffer = plasmaClient.create(id, object.length, metadata);
-        for (byte b : object) {
+    public static void saveObjectToPlasma(final PlasmaClient plasmaClient, final byte[] id, final byte[] object, final byte[] metadata) throws DuplicateObjectException, PlasmaOutOfMemoryException {
+        final ByteBuffer byteBuffer = plasmaClient.create(id, object.length, metadata);
+        for (final byte b : object) {
             byteBuffer.put(b);
         }
         plasmaClient.seal(id);
     }
 
-    public static String findAndDeleteEntryWithKey(PlasmaClient plasmaClient, String keyToDelete, PlasmaEntry startEntry, byte[] startID, int plasmaTimeoutMs) {
-        byte[] nextID = startEntry.nextPlasmaID;
+    public static String findAndDeleteEntryWithKey(final PlasmaClient plasmaClient, final String keyToDelete, final PlasmaEntry startEntry, final byte[] startID, final int plasmaTimeoutMs) {
+        final byte[] nextID = startEntry.nextPlasmaID;
 
         if (keyToDelete.equals(startEntry.key)) {
             log.info("Keys match");
             if (plasmaClient.contains(nextID)) {
                 log.info("Entry with next id {} exists", nextID);
                 byte[] nextEntryBytes = plasmaClient.get(nextID, plasmaTimeoutMs, false);
-                PlasmaEntry nextEntry = deserialize(nextEntryBytes);
+                final PlasmaEntry nextEntry = deserialize(nextEntryBytes);
                 byte[] nextNextID = nextEntry.nextPlasmaID;
                 if (plasmaClient.contains(nextNextID)) {
                     nextEntry.nextPlasmaID = nextID;
@@ -83,7 +83,7 @@ public class PlasmaUtils {
             log.info("Keys do not match");
             if (plasmaClient.contains(nextID)) {
                 log.info("Entry with next id {} exists", nextID);
-                PlasmaEntry nextEntry = deserialize(plasmaClient.get(nextID, plasmaTimeoutMs, false));
+                final PlasmaEntry nextEntry = deserialize(plasmaClient.get(nextID, plasmaTimeoutMs, false));
                 plasmaClient.release(startID);
                 return findAndDeleteEntryWithKey(plasmaClient, keyToDelete, nextEntry, nextID, plasmaTimeoutMs);
             } else {
@@ -94,22 +94,22 @@ public class PlasmaUtils {
         }
     }
 
-    public static void saveNewEntryToNextFreeId(PlasmaClient plasmaClient, byte[] fullID, String keyToCheck, byte[] newPlasmaEntryBytes, PlasmaEntry plasmaEntry, int plasmaTimeoutMs) throws DuplicateObjectException {
-        byte[] objectIdWithFreeNextID = getObjectIdOfNextEntryWithEmptyNextID(plasmaClient, plasmaEntry, fullID, keyToCheck, plasmaTimeoutMs);
+    public static void saveNewEntryToNextFreeId(final PlasmaClient plasmaClient, final byte[] fullID, final String keyToCheck, final byte[] newPlasmaEntryBytes, final PlasmaEntry plasmaEntry, final int plasmaTimeoutMs) throws DuplicateObjectException {
+        final byte[] objectIdWithFreeNextID = getObjectIdOfNextEntryWithEmptyNextID(plasmaClient, plasmaEntry, fullID, keyToCheck, plasmaTimeoutMs);
         log.info("Next object id with free next id is: {}", objectIdWithFreeNextID);
-        PlasmaEntry plasmaEntryWithEmptyNextID = deserialize(plasmaClient.get(objectIdWithFreeNextID, plasmaTimeoutMs, false));
+        final PlasmaEntry plasmaEntryWithEmptyNextID = deserialize(plasmaClient.get(objectIdWithFreeNextID, plasmaTimeoutMs, false));
 
-        byte[] id = generateNextIdOfId(objectIdWithFreeNextID);
+        final byte[] id = generateNextIdOfId(objectIdWithFreeNextID);
 
         deleteById(objectIdWithFreeNextID, plasmaClient);
 
-        PlasmaEntry updatedEntry = new PlasmaEntry(plasmaEntryWithEmptyNextID.key, plasmaEntryWithEmptyNextID.value, id);
+        final PlasmaEntry updatedEntry = new PlasmaEntry(plasmaEntryWithEmptyNextID.key, plasmaEntryWithEmptyNextID.value, id);
 
         saveObjectToPlasma(plasmaClient, objectIdWithFreeNextID, serialize(updatedEntry), new byte[0]);
         saveObjectToPlasma(plasmaClient, id, newPlasmaEntryBytes, new byte[0]);
     }
 
-    private static void deleteById(byte[] id, PlasmaClient plasmaClient) {
+    private static void deleteById(final byte[] id, final PlasmaClient plasmaClient) {
         log.info("Deleting {} ...", id);
         while (plasmaClient.contains(id)) {
             plasmaClient.release(id);
@@ -118,8 +118,8 @@ public class PlasmaUtils {
         log.info("Entry deleted");
     }
 
-    public static PlasmaEntry getPlasmaEntryFromBuffer(ByteBuffer objectBuffer) {
-        byte[] data = new byte[objectBuffer.remaining()];
+    public static PlasmaEntry getPlasmaEntryFromBuffer(final ByteBuffer objectBuffer) {
+        final byte[] data = new byte[objectBuffer.remaining()];
         objectBuffer.get(data);
         objectBuffer.position(0);
         return deserialize(data);
