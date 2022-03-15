@@ -111,7 +111,7 @@ public class PlasmaUtils {
         saveObjectToPlasma(plasmaClient, id, newPlasmaEntryBytes, new byte[0]);
     }
 
-    private static void deleteById(final byte[] id, final PlasmaClient plasmaClient) {
+    public static void deleteById(final byte[] id, final PlasmaClient plasmaClient) {
         log.info("Deleting {} ...", id);
         while (plasmaClient.contains(id)) {
             plasmaClient.release(id);

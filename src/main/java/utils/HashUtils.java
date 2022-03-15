@@ -51,13 +51,22 @@ public class HashUtils {
         return id;
     }
 
-    public static byte[] generateNextIdOfId(byte[] objectIdWithFreeNextID) {
-        String idAsHexString = bytesToHex(objectIdWithFreeNextID);
+    public static byte[] generateNextIdOfId(byte[] id) {
+        String idAsHexString = bytesToHex(id);
         String tailEnd = idAsHexString.substring(idAsHexString.length() - 4);
         int tailEndInt = Integer.parseInt(tailEnd);
         tailEndInt += 1;
         String newID = idAsHexString.substring(0, idAsHexString.length() - 4) + String.format("%04d", tailEndInt);
         return HexFormat.of().parseHex(newID);
+    }
+
+    public static byte[] generateTailEndOfNextIdOfId(byte[] id) {
+        String idAsHexString = bytesToHex(id);
+        String tailEnd = idAsHexString.substring(idAsHexString.length() - 4);
+        int tailEndInt = Integer.parseInt(tailEnd);
+        tailEndInt += 1;
+        String newTailEnd = String.format("%04d", tailEndInt);
+        return HexFormat.of().parseHex(newTailEnd);
     }
 
     public static String bytesToHex(final byte[] bytes) {
