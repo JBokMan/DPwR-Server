@@ -60,15 +60,6 @@ public class HashUtils {
         return HexFormat.of().parseHex(newID);
     }
 
-    public static byte[] generateTailEndOfNextIdOfId(byte[] id) {
-        String idAsHexString = bytesToHex(id);
-        String tailEnd = idAsHexString.substring(idAsHexString.length() - 4);
-        int tailEndInt = Integer.parseInt(tailEnd);
-        tailEndInt += 1;
-        String newTailEnd = String.format("%04d", tailEndInt);
-        return HexFormat.of().parseHex(newTailEnd);
-    }
-
     public static String bytesToHex(final byte[] bytes) {
         final StringBuilder sb = new StringBuilder();
         for (final byte b : bytes) {

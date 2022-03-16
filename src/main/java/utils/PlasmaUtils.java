@@ -72,13 +72,13 @@ public class PlasmaUtils {
                     nextEntry.nextPlasmaID = nextID;
                     nextEntryBytes = serialize(nextEntry);
                 }
-                deleteById(startID, plasmaClient);
+                deleteById(plasmaClient, startID);
                 plasmaClient.put(startID, nextEntryBytes, new byte[0]);
                 nextEntry.nextPlasmaID = nextNextID;
                 return findAndDeleteEntryWithKey(plasmaClient, nextEntry.key, nextEntry, nextID, plasmaTimeoutMs);
             } else {
                 log.info("Entry with next id {} does not exist", nextID);
-                deleteById(startID, plasmaClient);
+                deleteById(plasmaClient, startID);
                 return "204";
             }
         } else {
@@ -103,7 +103,7 @@ public class PlasmaUtils {
 
         final byte[] id = generateNextIdOfId(objectIdWithFreeNextID);
 
-        deleteById(objectIdWithFreeNextID, plasmaClient);
+        deleteById(plasmaClient, objectIdWithFreeNextID);
 
         final PlasmaEntry updatedEntry = new PlasmaEntry(plasmaEntryWithEmptyNextID.key, plasmaEntryWithEmptyNextID.value, id);
 
@@ -111,7 +111,7 @@ public class PlasmaUtils {
         saveObjectToPlasma(plasmaClient, id, newPlasmaEntryBytes, new byte[0]);
     }
 
-    public static void deleteById(final byte[] id, final PlasmaClient plasmaClient) {
+    public static void deleteById(final PlasmaClient plasmaClient, final byte[] id) {
         log.info("Deleting {} ...", id);
         while (plasmaClient.contains(id)) {
             plasmaClient.release(id);

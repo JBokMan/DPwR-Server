@@ -22,7 +22,7 @@ import static org.apache.commons.lang3.SerializationUtils.deserialize;
 import static org.apache.commons.lang3.SerializationUtils.serialize;
 import static utils.CommunicationUtils.*;
 import static utils.HashUtils.generateID;
-import static utils.HashUtils.generateTailEndOfNextIdOfId;
+import static utils.HashUtils.generateNextIdOfId;
 import static utils.PlasmaUtils.*;
 
 @Slf4j
@@ -163,22 +163,22 @@ public class InfinimumDBServer {
         int entrySize = byteBuffer.getInt();
         log.info("Received \"{}\"", entrySize);
         if (plasmaClient.contains(id)) {
+            log.warn("Plasma does contain the id");
             final PlasmaEntry plasmaEntry = deserialize(plasmaClient.get(id, PLASMA_TIMEOUT_MS, false));
             plasmaClient.release(id);
             if (plasmaEntry.key.equals(keyToPut)) {
                 log.warn("Object with id: {} has the key: {}", id, keyToPut);
                 sendSingleMessage(serialize("409"), endpoint, worker, CONNECTION_TIMEOUT_MS);
             } else {
-                log.info("Object with id: {} has not the key: {}", id, keyToPut);
-                sendSingleMessage(serialize("408"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+                log.warn("Object with id: {} has not the key: {}", id, keyToPut);
+                byte[] newNextID = new byte[20];
                 try {
                     final byte[] objectIdWithFreeNextID = getObjectIdOfNextEntryWithEmptyNextID(plasmaClient, plasmaEntry, id, keyToPut, PLASMA_TIMEOUT_MS);
                     log.info("Next object id with free next id is: {}", objectIdWithFreeNextID);
                     final PlasmaEntry plasmaEntryWithEmptyNextID = deserialize(plasmaClient.get(objectIdWithFreeNextID, PLASMA_TIMEOUT_MS, false));
-                    final byte[] newTailEnd = generateTailEndOfNextIdOfId(objectIdWithFreeNextID);
-                    log.info(String.valueOf(newTailEnd.length));
-                    sendSingleMessage(newTailEnd, endpoint, worker, CONNECTION_TIMEOUT_MS);
-                    byteBuffer = plasmaClient.create(id, entrySize, new byte[0]);
+                    final byte[] newNextId = generateNextIdOfId(objectIdWithFreeNextID);
+                    sendSingleMessage(serialize("200"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+                    byteBuffer = plasmaClient.create(newNextId, entrySize, new byte[0]);
                     final MemoryDescriptor objectAddress;
                     try {
                         objectAddress = getMemoryDescriptorOfByteBuffer(byteBuffer, context);
@@ -193,34 +193,45 @@ public class InfinimumDBServer {
                     final String statusCode = SerializationUtils.deserialize(receiveData(10, worker, CONNECTION_TIMEOUT_MS));
                     log.info("Received status code: \"{}\"", statusCode);
                     if ("200".equals(statusCode)) {
-                        plasmaClient.seal(id);
-                        deleteById(objectIdWithFreeNextID, plasmaClient);
-                        final PlasmaEntry updatedEntry = new PlasmaEntry(plasmaEntryWithEmptyNextID.key, plasmaEntryWithEmptyNextID.value, id);
+                        plasmaClient.seal(newNextId);
+                        deleteById(plasmaClient, objectIdWithFreeNextID);
+                        final PlasmaEntry updatedEntry = new PlasmaEntry(plasmaEntryWithEmptyNextID.key, plasmaEntryWithEmptyNextID.value, newNextId);
                         saveObjectToPlasma(plasmaClient, objectIdWithFreeNextID, serialize(updatedEntry), new byte[0]);
                     }
                 } catch (DuplicateObjectException e) {
                     log.warn(e.getMessage());
                     sendSingleMessage(serialize("409"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+                } catch (TimeoutException e) {
+                    log.info("test2");
+                    deleteById(plasmaClient, newNextID);
+                    throw e;
                 }
             }
         } else {
-            sendSingleMessage(serialize("200"), endpoint, worker, CONNECTION_TIMEOUT_MS);
-            byteBuffer = plasmaClient.create(id, entrySize, new byte[0]);
-            final MemoryDescriptor objectAddress;
             try {
-                objectAddress = getMemoryDescriptorOfByteBuffer(byteBuffer, context);
-            } catch (ControlException | CloseException e) {
-                log.error("An exception occurred getting the objects memory address, aborting GET operation");
-                sendSingleMessage(serialize("500"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+                log.info("Plasma does not contain the id");
+                sendSingleMessage(serialize("200"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+                byteBuffer = plasmaClient.create(id, entrySize, new byte[0]);
+                final MemoryDescriptor objectAddress;
+                try {
+                    objectAddress = getMemoryDescriptorOfByteBuffer(byteBuffer, context);
+                } catch (ControlException | CloseException e) {
+                    log.error("An exception occurred getting the objects memory address, aborting GET operation");
+                    sendSingleMessage(serialize("500"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+                    throw e;
+                }
+                final ArrayList<Long> requests = new ArrayList<>();
+                requests.add(prepareToSendRemoteKey(objectAddress, endpoint));
+                sendData(requests, worker, CONNECTION_TIMEOUT_MS);
+                final String statusCode = SerializationUtils.deserialize(receiveData(10, worker, CONNECTION_TIMEOUT_MS));
+                log.info("Received status code: \"{}\"", statusCode);
+                if ("200".equals(statusCode)) {
+                    plasmaClient.seal(id);
+                }
+            } catch (TimeoutException e) {
+                log.info("test");
+                deleteById(plasmaClient, id);
                 throw e;
-            }
-            final ArrayList<Long> requests = new ArrayList<>();
-            requests.add(prepareToSendRemoteKey(objectAddress, endpoint));
-            sendData(requests, worker, CONNECTION_TIMEOUT_MS);
-            final String statusCode = SerializationUtils.deserialize(receiveData(10, worker, CONNECTION_TIMEOUT_MS));
-            log.info("Received status code: \"{}\"", statusCode);
-            if ("200".equals(statusCode)) {
-                plasmaClient.seal(id);
             }
         }
         log.info("Put operation completed \n");
@@ -271,7 +282,7 @@ public class InfinimumDBServer {
         if (plasmaClient.contains(id)) {
             log.info("Entry with id {} exists", id);
             final PlasmaEntry entry = deserialize(plasmaClient.get(id, PLASMA_TIMEOUT_MS, false));
-
+            log.info(entry.toString());
             statusCode = findAndDeleteEntryWithKey(plasmaClient, keyToDelete, entry, id, PLASMA_TIMEOUT_MS);
         }
 
