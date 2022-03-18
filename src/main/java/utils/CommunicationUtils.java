@@ -65,6 +65,7 @@ public class CommunicationUtils {
             final MemoryDescriptor objectAddress = getMemoryDescriptorOfByteBuffer(byteBuffer, context);
             sendRemoteKey(objectAddress, endpoint, worker, timeoutMs);
         } catch (final TimeoutException e) {
+            plasmaClient.seal(id);
             deleteById(plasmaClient, id);
             throw e;
         }
@@ -75,6 +76,7 @@ public class CommunicationUtils {
         try {
             statusCode = SerializationUtils.deserialize(receiveData(10, worker, timeoutMs));
         } catch (final TimeoutException e) {
+            plasmaClient.seal(id);
             deleteById(plasmaClient, id);
             throw e;
         }

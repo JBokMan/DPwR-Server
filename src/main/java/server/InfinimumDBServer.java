@@ -7,7 +7,7 @@ import de.hhu.bsinfo.infinileap.util.ResourcePool;
 import lombok.extern.slf4j.Slf4j;
 import model.PlasmaEntry;
 import org.apache.arrow.plasma.PlasmaClient;
-import org.apache.commons.lang3.ObjectUtils;
+import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.SerializationException;
 
 import java.net.InetSocketAddress;
@@ -164,7 +164,7 @@ public class InfinimumDBServer {
             plasmaClient.release(id);
             final byte[] objectIdWithFreeNextID = getObjectIdOfNextEntryWithEmptyNextID(plasmaClient, plasmaEntry, id, keyToPut, PLASMA_TIMEOUT_MS);
 
-            if (ObjectUtils.isEmpty(objectIdWithFreeNextID)) {
+            if (ArrayUtils.isEmpty(objectIdWithFreeNextID)) {
                 log.warn("Object with key is already in plasma");
                 sendSingleMessage(serialize("409"), endpoint, worker, CONNECTION_TIMEOUT_MS);
                 log.info("Put operation completed \n");

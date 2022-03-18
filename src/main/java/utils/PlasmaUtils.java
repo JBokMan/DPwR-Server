@@ -34,7 +34,7 @@ public class PlasmaUtils {
 
     public static byte[] getObjectIdOfNextEntryWithEmptyNextID(final PlasmaClient plasmaClient, final PlasmaEntry startEntry, final byte[] startId, final String keyToCheck, final int plasmaTimeoutMs) {
         if (startEntry.key.equals(keyToCheck)) {
-            return null;
+            return new byte[0];
         }
         byte[] currentID = startId;
         byte[] nextID = startEntry.nextPlasmaID;
@@ -44,7 +44,7 @@ public class PlasmaUtils {
             plasmaClient.release(nextID);
             log.info(nextPlasmaEntry.key);
             if (nextPlasmaEntry.key.equals(keyToCheck)) {
-                return null;
+                return new byte[0];
             }
             nextID = nextPlasmaEntry.nextPlasmaID;
         }
