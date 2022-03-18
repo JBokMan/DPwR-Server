@@ -7,6 +7,9 @@ import jdk.incubator.foreign.MemorySegment;
 import jdk.incubator.foreign.ResourceScope;
 import jdk.incubator.foreign.ValueLayout;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.arrow.plasma.PlasmaClient;
+import org.apache.commons.lang3.ObjectUtils;
+import org.apache.commons.lang3.SerializationUtils;
 
 import java.lang.ref.Cleaner;
 import java.nio.ByteBuffer;
@@ -18,6 +21,8 @@ import java.util.concurrent.TimeoutException;
 import static de.hhu.bsinfo.infinileap.example.util.Requests.state;
 import static org.apache.commons.lang3.SerializationUtils.deserialize;
 import static org.apache.commons.lang3.SerializationUtils.serialize;
+import static utils.PlasmaUtils.deleteById;
+import static utils.PlasmaUtils.updateNextIdOfEntry;
 
 @Slf4j
 public class CommunicationUtils {
@@ -45,6 +50,51 @@ public class CommunicationUtils {
         return endpoint.sendTagged(descriptor, Tag.of(0L));
     }
 
+    public static void sendRemoteKey(final MemoryDescriptor descriptor, final Endpoint endpoint, final Worker worker, final int timeoutMs) throws TimeoutException {
+        log.info("Send remote key");
+        final long request = endpoint.sendTagged(descriptor, Tag.of(0L));
+        awaitRequestIfNecessary(request, worker, timeoutMs);
+    }
+
+    public static void sendNewEntryAddress(final PlasmaClient plasmaClient, final byte[] id, final int entrySize, final Endpoint endpoint, final Worker worker, final Context context, final int timeoutMs) throws TimeoutException, ControlException, CloseException {
+        // signal id was not already in plasma
+        sendSingleMessage(serialize("200"), endpoint, worker, timeoutMs);
+        try {
+            // create new plasma entry with correct id and size and send its memory address to client
+            final ByteBuffer byteBuffer = plasmaClient.create(id, entrySize, new byte[0]);
+            final MemoryDescriptor objectAddress = getMemoryDescriptorOfByteBuffer(byteBuffer, context);
+            sendRemoteKey(objectAddress, endpoint, worker, timeoutMs);
+        } catch (final TimeoutException e) {
+            deleteById(plasmaClient, id);
+            throw e;
+        }
+    }
+
+    public static void awaitPutCompletionSignal(final PlasmaClient plasmaClient, final byte[] id, final Worker worker, final byte[] idToUpdate, final int timeoutMs, final int plasmaTimeoutMs) throws TimeoutException {
+        final String statusCode;
+        try {
+            statusCode = SerializationUtils.deserialize(receiveData(10, worker, timeoutMs));
+        } catch (final TimeoutException e) {
+            deleteById(plasmaClient, id);
+            throw e;
+        }
+        log.info("Received status code: \"{}\"", statusCode);
+        if ("200".equals(statusCode)) {
+            plasmaClient.seal(id);
+            if (ObjectUtils.isNotEmpty(idToUpdate)) {
+                updateNextIdOfEntry(plasmaClient, idToUpdate, id, plasmaTimeoutMs);
+            }
+        }
+    }
+
+    public static int receiveEntrySize(final Worker worker, final int timeoutMs) throws TimeoutException {
+        final byte[] entrySizeBytes = receiveData(Integer.BYTES, worker, timeoutMs);
+        final ByteBuffer byteBuffer = ByteBuffer.wrap(entrySizeBytes);
+        final int entrySize = byteBuffer.getInt();
+        log.info("Received \"{}\"", entrySize);
+        return entrySize;
+    }
+
     public static void sendData(final List<Long> requests, final Worker worker, final int timeoutMs) throws TimeoutException {
         log.info("Sending data");
         boolean timeoutHappened = false;
@@ -56,11 +106,11 @@ public class CommunicationUtils {
                 while (state(request) != Requests.State.COMPLETE && counter < timeoutMs) {
                     worker.progress();
                     try {
-                        TimeUnit timeUnit = TimeUnit.MILLISECONDS;
+                        final TimeUnit timeUnit = TimeUnit.MILLISECONDS;
                         synchronized (timeUnit) {
                             timeUnit.wait(1);
                         }
-                    } catch (InterruptedException e) {
+                    } catch (final InterruptedException e) {
                         log.error(e.getMessage());
                         worker.cancelRequest(request);
                         timeoutHappened = true;
@@ -98,25 +148,6 @@ public class CommunicationUtils {
         }
     }
 
-    public static byte[] receiveRemoteObject(final Endpoint endpoint, final Worker worker, final int timeoutMs) throws ControlException, TimeoutException {
-        try (final ResourceScope scope = ResourceScope.newConfinedScope(Cleaner.create())) {
-
-            final MemoryDescriptor descriptor = new MemoryDescriptor(scope);
-            log.info("Receiving Remote Key");
-            final long request = worker.receiveTagged(descriptor, Tag.of(0L), new RequestParameters(scope));
-
-            awaitRequestIfNecessary(request, worker, timeoutMs);
-
-            final MemorySegment targetBuffer = MemorySegment.allocateNative(descriptor.remoteSize(), scope);
-            try (final RemoteKey remoteKey = endpoint.unpack(descriptor)) {
-                final long request2 = endpoint.get(targetBuffer, descriptor.remoteAddress(), remoteKey, new RequestParameters(scope));
-                awaitRequestIfNecessary(request2, worker, timeoutMs);
-            }
-
-            return targetBuffer.toArray(ValueLayout.JAVA_BYTE);
-        }
-    }
-
     private static void awaitRequestIfNecessary(final long request, final Worker worker, final int timeoutMs) throws TimeoutException {
         if (Status.isError(request)) {
             log.warn("A request has an error status");
@@ -125,11 +156,11 @@ public class CommunicationUtils {
         while (state(request) != Requests.State.COMPLETE && counter < timeoutMs) {
             worker.progress();
             try {
-                TimeUnit timeUnit = TimeUnit.MILLISECONDS;
+                final TimeUnit timeUnit = TimeUnit.MILLISECONDS;
                 synchronized (timeUnit) {
                     timeUnit.wait(1);
                 }
-            } catch (InterruptedException e) {
+            } catch (final InterruptedException e) {
                 log.error(e.getMessage());
                 worker.cancelRequest(request);
                 return;
@@ -148,7 +179,7 @@ public class CommunicationUtils {
         // Get key size in bytes
         final byte[] keySizeBytes = receiveData(Integer.BYTES, worker, timeoutMs);
         final ByteBuffer byteBuffer = ByteBuffer.wrap(keySizeBytes);
-        int keySize = byteBuffer.getInt();
+        final int keySize = byteBuffer.getInt();
         log.info("Received \"{}\"", keySize);
 
         // Get key as bytes
@@ -164,7 +195,7 @@ public class CommunicationUtils {
         final MemoryDescriptor objectAddress;
         try {
             objectAddress = getMemoryDescriptorOfByteBuffer(objectBuffer, context);
-        } catch (ControlException | CloseException e) {
+        } catch (final ControlException | CloseException e) {
             log.error("An exception occurred getting the objects memory address, aborting GET operation");
             sendSingleMessage(serialize("500"), endpoint, worker, timeoutMs);
             throw e;

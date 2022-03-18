@@ -10,8 +10,6 @@ import java.nio.ByteBuffer;
 
 import static org.apache.commons.lang3.SerializationUtils.deserialize;
 import static org.apache.commons.lang3.SerializationUtils.serialize;
-import static utils.HashUtils.bytesToHex;
-import static utils.HashUtils.generateNextIdOfId;
 
 @Slf4j
 public class PlasmaUtils {
@@ -34,7 +32,10 @@ public class PlasmaUtils {
         }
     }
 
-    public static byte[] getObjectIdOfNextEntryWithEmptyNextID(final PlasmaClient plasmaClient, final PlasmaEntry startEntry, final byte[] startId, final String keyToCheck, final int plasmaTimeoutMs) throws DuplicateObjectException {
+    public static byte[] getObjectIdOfNextEntryWithEmptyNextID(final PlasmaClient plasmaClient, final PlasmaEntry startEntry, final byte[] startId, final String keyToCheck, final int plasmaTimeoutMs) {
+        if (startEntry.key.equals(keyToCheck)) {
+            return null;
+        }
         byte[] currentID = startId;
         byte[] nextID = startEntry.nextPlasmaID;
         while (plasmaClient.contains(nextID)) {
@@ -43,11 +44,19 @@ public class PlasmaUtils {
             plasmaClient.release(nextID);
             log.info(nextPlasmaEntry.key);
             if (nextPlasmaEntry.key.equals(keyToCheck)) {
-                throw new DuplicateObjectException(bytesToHex(nextID));
+                return null;
             }
             nextID = nextPlasmaEntry.nextPlasmaID;
         }
+        log.info("Next object id with free next id is: {}", currentID);
         return currentID;
+    }
+
+    public static void updateNextIdOfEntry(final PlasmaClient plasmaClient, final byte[] idToUpdate, final byte[] newNextId, final int plasmaTimeoutMs) {
+        final PlasmaEntry entryToUpdate = deserialize(plasmaClient.get(idToUpdate, plasmaTimeoutMs, false));
+        deleteById(plasmaClient, idToUpdate);
+        final PlasmaEntry updatedEntry = new PlasmaEntry(entryToUpdate.key, entryToUpdate.value, newNextId);
+        saveObjectToPlasma(plasmaClient, idToUpdate, serialize(updatedEntry), new byte[0]);
     }
 
     public static void saveObjectToPlasma(final PlasmaClient plasmaClient, final byte[] id, final byte[] object, final byte[] metadata) throws DuplicateObjectException, PlasmaOutOfMemoryException {
@@ -67,7 +76,7 @@ public class PlasmaUtils {
                 log.info("Entry with next id {} exists", nextID);
                 byte[] nextEntryBytes = plasmaClient.get(nextID, plasmaTimeoutMs, false);
                 final PlasmaEntry nextEntry = deserialize(nextEntryBytes);
-                byte[] nextNextID = nextEntry.nextPlasmaID;
+                final byte[] nextNextID = nextEntry.nextPlasmaID;
                 if (plasmaClient.contains(nextNextID)) {
                     nextEntry.nextPlasmaID = nextID;
                     nextEntryBytes = serialize(nextEntry);
@@ -94,21 +103,6 @@ public class PlasmaUtils {
                 return "404";
             }
         }
-    }
-
-    public static void saveNewEntryToNextFreeId(final PlasmaClient plasmaClient, final byte[] fullID, final String keyToCheck, final byte[] newPlasmaEntryBytes, final PlasmaEntry plasmaEntry, final int plasmaTimeoutMs) throws DuplicateObjectException {
-        final byte[] objectIdWithFreeNextID = getObjectIdOfNextEntryWithEmptyNextID(plasmaClient, plasmaEntry, fullID, keyToCheck, plasmaTimeoutMs);
-        log.info("Next object id with free next id is: {}", objectIdWithFreeNextID);
-        final PlasmaEntry plasmaEntryWithEmptyNextID = deserialize(plasmaClient.get(objectIdWithFreeNextID, plasmaTimeoutMs, false));
-
-        final byte[] id = generateNextIdOfId(objectIdWithFreeNextID);
-
-        deleteById(plasmaClient, objectIdWithFreeNextID);
-
-        final PlasmaEntry updatedEntry = new PlasmaEntry(plasmaEntryWithEmptyNextID.key, plasmaEntryWithEmptyNextID.value, id);
-
-        saveObjectToPlasma(plasmaClient, objectIdWithFreeNextID, serialize(updatedEntry), new byte[0]);
-        saveObjectToPlasma(plasmaClient, id, newPlasmaEntryBytes, new byte[0]);
     }
 
     public static void deleteById(final PlasmaClient plasmaClient, final byte[] id) {

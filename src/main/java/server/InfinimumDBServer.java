@@ -7,13 +7,11 @@ import de.hhu.bsinfo.infinileap.util.ResourcePool;
 import lombok.extern.slf4j.Slf4j;
 import model.PlasmaEntry;
 import org.apache.arrow.plasma.PlasmaClient;
-import org.apache.arrow.plasma.exceptions.DuplicateObjectException;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.SerializationException;
-import org.apache.commons.lang3.SerializationUtils;
 
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
@@ -29,20 +27,20 @@ import static utils.PlasmaUtils.*;
 public class InfinimumDBServer {
 
     private static final int OPERATION_MESSAGE_SIZE = 10;
-    final transient int serverID = 0;
-    transient int serverCount = 1;
+    static final int serverID = 0;
+    int serverCount = 1;
 
-    private transient PlasmaClient plasmaClient;
-    private transient final String plasmaFilePath;
+    private PlasmaClient plasmaClient;
+    private final String plasmaFilePath;
 
-    private transient final ResourcePool resources = new ResourcePool();
-    private static final long DEFAULT_REQUEST_SIZE = 1024;
+    private final ResourcePool resources = new ResourcePool();
+    private static final long DEFAULT_REQUEST_SIZE = 1024L;
     private static final ContextParameters.Feature[] FEATURE_SET = {ContextParameters.Feature.TAG, ContextParameters.Feature.RMA, ContextParameters.Feature.WAKEUP, ContextParameters.Feature.AM, ContextParameters.Feature.ATOMIC_32, ContextParameters.Feature.ATOMIC_64, ContextParameters.Feature.STREAM};
     private static final int CONNECTION_TIMEOUT_MS = 750;
     private static final int PLASMA_TIMEOUT_MS = 500;
-    private transient Worker worker;
-    private transient Context context;
-    private transient final InetSocketAddress listenAddress;
+    private Worker worker;
+    private Context context;
+    private final InetSocketAddress listenAddress;
 
     public InfinimumDBServer(final String plasmaFilePath, final String listenAddress, final Integer listenPort) {
         this.listenAddress = new InetSocketAddress(listenAddress, listenPort);
@@ -62,7 +60,7 @@ public class InfinimumDBServer {
         System.loadLibrary("plasma_java");
         try {
             this.plasmaClient = new PlasmaClient(plasmaFilePath, "", 0);
-        } catch (Exception e) {
+        } catch (final Exception e) {
             if (log.isErrorEnabled()) log.error("PlasmaDB could not be reached");
         }
     }
@@ -71,11 +69,11 @@ public class InfinimumDBServer {
         try (resources) {
             initialize();
             listenLoop();
-        } catch (ControlException e) {
+        } catch (final ControlException e) {
             log.error("Native operation failed", e);
-        } catch (CloseException e) {
+        } catch (final CloseException e) {
             log.error("Closing resource failed", e);
-        } catch (InterruptedException e) {
+        } catch (final InterruptedException e) {
             log.error("Unexpected interrupt occurred", e);
         }
     }
@@ -85,10 +83,10 @@ public class InfinimumDBServer {
         log.info("Using UCX version {}", Context.getVersion());
 
         // Create context parameters
-        var contextParameters = new ContextParameters().setFeatures(FEATURE_SET).setRequestSize(DEFAULT_REQUEST_SIZE);
+        final var contextParameters = new ContextParameters().setFeatures(FEATURE_SET).setRequestSize(DEFAULT_REQUEST_SIZE);
 
         // Read configuration (Environment Variables)
-        var configuration = pushResource(Configuration.read());
+        final var configuration = pushResource(Configuration.read());
 
         // Initialize UCP context
         log.info("Initializing context");
@@ -96,23 +94,23 @@ public class InfinimumDBServer {
 
         // Create a worker
         log.info("Creating worker");
-        var workerParameters = new WorkerParameters().setThreadMode(ThreadMode.SINGLE);
+        final var workerParameters = new WorkerParameters().setThreadMode(ThreadMode.SINGLE);
         this.worker = pushResource(context.createWorker(workerParameters));
 
         // Creating clean up hook
-        Thread cleanUpThread = new Thread(() -> {
+        final Thread cleanUpThread = new Thread(() -> {
             log.warn("Attempting graceful shutdown");
             try {
                 resources.close();
                 log.warn("Success");
-            } catch (CloseException e) {
+            } catch (final CloseException e) {
                 log.error("Exception while cleaning up");
             }
         });
         Runtime.getRuntime().addShutdownHook(cleanUpThread);
     }
 
-    protected <T extends AutoCloseable> T pushResource(T resource) {
+    protected <T extends AutoCloseable> T pushResource(final T resource) {
         resources.push(resource);
         return resource;
     }
@@ -146,7 +144,7 @@ public class InfinimumDBServer {
                         delOperation(worker, endpoint);
                     }
                 }
-            } catch (SerializationException | ExecutionException | TimeoutException | CloseException e) {
+            } catch (final SerializationException | ExecutionException | TimeoutException | CloseException e) {
                 log.error(e.getMessage());
             } finally {
                 endpoint.closeNonBlocking();
@@ -157,82 +155,31 @@ public class InfinimumDBServer {
 
     private void putOperation(final Worker worker, final Endpoint endpoint) throws TimeoutException, ControlException, CloseException {
         final String keyToPut = receiveKey(worker, CONNECTION_TIMEOUT_MS);
-        final byte[] id = generateID(keyToPut);
-        final byte[] entrySizeBytes = receiveData(Integer.BYTES, worker, CONNECTION_TIMEOUT_MS);
-        ByteBuffer byteBuffer = ByteBuffer.wrap(entrySizeBytes);
-        int entrySize = byteBuffer.getInt();
-        log.info("Received \"{}\"", entrySize);
+        byte[] id = generateID(keyToPut);
+        final int entrySize = receiveEntrySize(worker, CONNECTION_TIMEOUT_MS);
+
         if (plasmaClient.contains(id)) {
             log.warn("Plasma does contain the id");
             final PlasmaEntry plasmaEntry = deserialize(plasmaClient.get(id, PLASMA_TIMEOUT_MS, false));
             plasmaClient.release(id);
-            if (plasmaEntry.key.equals(keyToPut)) {
-                log.warn("Object with id: {} has the key: {}", id, keyToPut);
+            final byte[] objectIdWithFreeNextID = getObjectIdOfNextEntryWithEmptyNextID(plasmaClient, plasmaEntry, id, keyToPut, PLASMA_TIMEOUT_MS);
+
+            if (ObjectUtils.isEmpty(objectIdWithFreeNextID)) {
+                log.warn("Object with key is already in plasma");
                 sendSingleMessage(serialize("409"), endpoint, worker, CONNECTION_TIMEOUT_MS);
-            } else {
-                log.warn("Object with id: {} has not the key: {}", id, keyToPut);
-                byte[] newNextID = new byte[20];
-                try {
-                    final byte[] objectIdWithFreeNextID = getObjectIdOfNextEntryWithEmptyNextID(plasmaClient, plasmaEntry, id, keyToPut, PLASMA_TIMEOUT_MS);
-                    log.info("Next object id with free next id is: {}", objectIdWithFreeNextID);
-                    final PlasmaEntry plasmaEntryWithEmptyNextID = deserialize(plasmaClient.get(objectIdWithFreeNextID, PLASMA_TIMEOUT_MS, false));
-                    final byte[] newNextId = generateNextIdOfId(objectIdWithFreeNextID);
-                    sendSingleMessage(serialize("200"), endpoint, worker, CONNECTION_TIMEOUT_MS);
-                    byteBuffer = plasmaClient.create(newNextId, entrySize, new byte[0]);
-                    final MemoryDescriptor objectAddress;
-                    try {
-                        objectAddress = getMemoryDescriptorOfByteBuffer(byteBuffer, context);
-                    } catch (ControlException | CloseException e) {
-                        log.error("An exception occurred getting the objects memory address, aborting GET operation");
-                        sendSingleMessage(serialize("500"), endpoint, worker, CONNECTION_TIMEOUT_MS);
-                        throw e;
-                    }
-                    final ArrayList<Long> requests = new ArrayList<>();
-                    requests.add(prepareToSendRemoteKey(objectAddress, endpoint));
-                    sendData(requests, worker, CONNECTION_TIMEOUT_MS);
-                    final String statusCode = SerializationUtils.deserialize(receiveData(10, worker, CONNECTION_TIMEOUT_MS));
-                    log.info("Received status code: \"{}\"", statusCode);
-                    if ("200".equals(statusCode)) {
-                        plasmaClient.seal(newNextId);
-                        deleteById(plasmaClient, objectIdWithFreeNextID);
-                        final PlasmaEntry updatedEntry = new PlasmaEntry(plasmaEntryWithEmptyNextID.key, plasmaEntryWithEmptyNextID.value, newNextId);
-                        saveObjectToPlasma(plasmaClient, objectIdWithFreeNextID, serialize(updatedEntry), new byte[0]);
-                    }
-                } catch (DuplicateObjectException e) {
-                    log.warn(e.getMessage());
-                    sendSingleMessage(serialize("409"), endpoint, worker, CONNECTION_TIMEOUT_MS);
-                } catch (TimeoutException e) {
-                    log.info("test2");
-                    deleteById(plasmaClient, newNextID);
-                    throw e;
-                }
+                log.info("Put operation completed \n");
+                return;
             }
+
+            log.warn("Key is not in plasma, handling id collision");
+            id = generateNextIdOfId(objectIdWithFreeNextID);
+
+            sendNewEntryAddress(plasmaClient, id, entrySize, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
+            awaitPutCompletionSignal(plasmaClient, id, worker, objectIdWithFreeNextID, CONNECTION_TIMEOUT_MS, PLASMA_TIMEOUT_MS);
         } else {
-            try {
-                log.info("Plasma does not contain the id");
-                sendSingleMessage(serialize("200"), endpoint, worker, CONNECTION_TIMEOUT_MS);
-                byteBuffer = plasmaClient.create(id, entrySize, new byte[0]);
-                final MemoryDescriptor objectAddress;
-                try {
-                    objectAddress = getMemoryDescriptorOfByteBuffer(byteBuffer, context);
-                } catch (ControlException | CloseException e) {
-                    log.error("An exception occurred getting the objects memory address, aborting GET operation");
-                    sendSingleMessage(serialize("500"), endpoint, worker, CONNECTION_TIMEOUT_MS);
-                    throw e;
-                }
-                final ArrayList<Long> requests = new ArrayList<>();
-                requests.add(prepareToSendRemoteKey(objectAddress, endpoint));
-                sendData(requests, worker, CONNECTION_TIMEOUT_MS);
-                final String statusCode = SerializationUtils.deserialize(receiveData(10, worker, CONNECTION_TIMEOUT_MS));
-                log.info("Received status code: \"{}\"", statusCode);
-                if ("200".equals(statusCode)) {
-                    plasmaClient.seal(id);
-                }
-            } catch (TimeoutException e) {
-                log.info("test");
-                deleteById(plasmaClient, id);
-                throw e;
-            }
+            log.info("Plasma does not contain the id");
+            sendNewEntryAddress(plasmaClient, id, entrySize, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
+            awaitPutCompletionSignal(plasmaClient, id, worker, null, CONNECTION_TIMEOUT_MS, PLASMA_TIMEOUT_MS);
         }
         log.info("Put operation completed \n");
     }
