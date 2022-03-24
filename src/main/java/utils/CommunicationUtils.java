@@ -34,7 +34,7 @@ public class CommunicationUtils {
         }
     }
 
-    public static Long prepareToSendData(final byte[] data, final Endpoint endpoint, final ResourceScope scope) {
+    public static Long prepareToSendData(final int tagID, final byte[] data, final Endpoint endpoint, final ResourceScope scope) {
         log.info("Prepare to send data");
         final int dataSize = data.length;
 
@@ -42,28 +42,28 @@ public class CommunicationUtils {
         final MemorySegment buffer = MemorySegment.allocateNative(dataSize, scope);
         buffer.copyFrom(source);
 
-        return endpoint.sendTagged(buffer, Tag.of(0L), new RequestParameters());
+        return endpoint.sendTagged(buffer, Tag.of(tagID), new RequestParameters());
     }
 
-    public static Long prepareToSendRemoteKey(final MemoryDescriptor descriptor, final Endpoint endpoint) {
+    public static Long prepareToSendRemoteKey(final int tagID, final MemoryDescriptor descriptor, final Endpoint endpoint) {
         log.info("Prepare to send remote key");
-        return endpoint.sendTagged(descriptor, Tag.of(0L));
+        return endpoint.sendTagged(descriptor, Tag.of(tagID));
     }
 
-    public static void sendRemoteKey(final MemoryDescriptor descriptor, final Endpoint endpoint, final Worker worker, final int timeoutMs) throws TimeoutException {
+    public static void sendRemoteKey(final int tagID, final MemoryDescriptor descriptor, final Endpoint endpoint, final Worker worker, final int timeoutMs) throws TimeoutException {
         log.info("Send remote key");
-        final long request = endpoint.sendTagged(descriptor, Tag.of(0L));
+        final long request = endpoint.sendTagged(descriptor, Tag.of(tagID));
         awaitRequestIfNecessary(request, worker, timeoutMs);
     }
 
-    public static void sendNewEntryAddress(final PlasmaClient plasmaClient, final byte[] id, final int entrySize, final Endpoint endpoint, final Worker worker, final Context context, final int timeoutMs) throws TimeoutException, ControlException, CloseException {
+    public static void sendNewEntryAddress(final int tagID, final PlasmaClient plasmaClient, final byte[] id, final int entrySize, final Endpoint endpoint, final Worker worker, final Context context, final int timeoutMs) throws TimeoutException, ControlException, CloseException {
         // signal id was not already in plasma
-        sendSingleMessage(serialize("200"), endpoint, worker, timeoutMs);
+        sendSingleMessage(tagID, serialize("200"), endpoint, worker, timeoutMs);
         try {
             // create new plasma entry with correct id and size and send its memory address to client
             final ByteBuffer byteBuffer = plasmaClient.create(id, entrySize, new byte[0]);
             final MemoryDescriptor objectAddress = getMemoryDescriptorOfByteBuffer(byteBuffer, context);
-            sendRemoteKey(objectAddress, endpoint, worker, timeoutMs);
+            sendRemoteKey(tagID, objectAddress, endpoint, worker, timeoutMs);
         } catch (final TimeoutException e) {
             plasmaClient.seal(id);
             deleteById(plasmaClient, id);
@@ -71,10 +71,10 @@ public class CommunicationUtils {
         }
     }
 
-    public static void awaitPutCompletionSignal(final PlasmaClient plasmaClient, final byte[] id, final Worker worker, final byte[] idToUpdate, final int timeoutMs, final int plasmaTimeoutMs) throws TimeoutException {
+    public static void awaitPutCompletionSignal(final int tagID, final PlasmaClient plasmaClient, final byte[] id, final Worker worker, final byte[] idToUpdate, final int timeoutMs, final int plasmaTimeoutMs) throws TimeoutException {
         final String statusCode;
         try {
-            statusCode = SerializationUtils.deserialize(receiveData(10, worker, timeoutMs));
+            statusCode = SerializationUtils.deserialize(receiveData(tagID, 10, worker, timeoutMs));
         } catch (final TimeoutException e) {
             plasmaClient.seal(id);
             deleteById(plasmaClient, id);
@@ -89,8 +89,8 @@ public class CommunicationUtils {
         }
     }
 
-    public static int receiveEntrySize(final Worker worker, final int timeoutMs) throws TimeoutException {
-        final byte[] entrySizeBytes = receiveData(Integer.BYTES, worker, timeoutMs);
+    public static int receiveEntrySize(final int tagID, final Worker worker, final int timeoutMs) throws TimeoutException {
+        final byte[] entrySizeBytes = receiveData(tagID, Integer.BYTES, worker, timeoutMs);
         final ByteBuffer byteBuffer = ByteBuffer.wrap(entrySizeBytes);
         final int entrySize = byteBuffer.getInt();
         log.info("Received \"{}\"", entrySize);
@@ -133,18 +133,18 @@ public class CommunicationUtils {
         }
     }
 
-    public static void sendSingleMessage(final byte[] data, final Endpoint endpoint, final Worker worker, final int timeoutMs) throws TimeoutException {
+    public static void sendSingleMessage(final int tagID, final byte[] data, final Endpoint endpoint, final Worker worker, final int timeoutMs) throws TimeoutException {
         try (final ResourceScope scope = ResourceScope.newConfinedScope(Cleaner.create())) {
-            final Long request = prepareToSendData(data, endpoint, scope);
+            final Long request = prepareToSendData(tagID, data, endpoint, scope);
             sendData(List.of(request), worker, timeoutMs);
         }
     }
 
-    public static byte[] receiveData(final int size, final Worker worker, final int timeoutMs) throws TimeoutException {
+    public static byte[] receiveData(final int tagID, final int size, final Worker worker, final int timeoutMs) throws TimeoutException {
         log.info("Receiving message");
         try (final ResourceScope scope = ResourceScope.newConfinedScope(Cleaner.create())) {
             final MemorySegment buffer = MemorySegment.allocateNative(size, scope);
-            final long request = worker.receiveTagged(buffer, Tag.of(0L), new RequestParameters(scope));
+            final long request = worker.receiveTagged(buffer, Tag.of(tagID), new RequestParameters(scope));
             awaitRequestIfNecessary(request, worker, timeoutMs);
             return buffer.toArray(ValueLayout.JAVA_BYTE);
         }
@@ -177,37 +177,37 @@ public class CommunicationUtils {
         }
     }
 
-    public static String receiveKey(final Worker worker, final int timeoutMs) throws TimeoutException {
+    public static String receiveKey(final int tagID, final Worker worker, final int timeoutMs) throws TimeoutException {
         // Get key size in bytes
-        final byte[] keySizeBytes = receiveData(Integer.BYTES, worker, timeoutMs);
+        final byte[] keySizeBytes = receiveData(tagID, Integer.BYTES, worker, timeoutMs);
         final ByteBuffer byteBuffer = ByteBuffer.wrap(keySizeBytes);
         final int keySize = byteBuffer.getInt();
         log.info("Received \"{}\"", keySize);
 
         // Get key as bytes
-        final byte[] keyBytes = receiveData(keySize, worker, timeoutMs);
+        final byte[] keyBytes = receiveData(tagID, keySize, worker, timeoutMs);
         final String key = deserialize(keyBytes);
         log.info("Received \"{}\"", key);
 
         return key;
     }
 
-    public static void sendObjectAddressAndStatusCode(final ByteBuffer objectBuffer, final Endpoint endpoint, final Worker worker, final Context context, final int timeoutMs) throws ControlException, TimeoutException, CloseException {
+    public static void sendObjectAddressAndStatusCode(final int tagID, final ByteBuffer objectBuffer, final Endpoint endpoint, final Worker worker, final Context context, final int timeoutMs) throws ControlException, TimeoutException, CloseException {
         // Prepare objectBytes for transmission
         final MemoryDescriptor objectAddress;
         try {
             objectAddress = getMemoryDescriptorOfByteBuffer(objectBuffer, context);
         } catch (final ControlException | CloseException e) {
             log.error("An exception occurred getting the objects memory address, aborting GET operation");
-            sendSingleMessage(serialize("500"), endpoint, worker, timeoutMs);
+            sendSingleMessage(tagID, serialize("500"), endpoint, worker, timeoutMs);
             throw e;
         }
 
         // Send status and object address
         final ArrayList<Long> requests = new ArrayList<>();
         try (final ResourceScope scope = ResourceScope.newConfinedScope(Cleaner.create())) {
-            requests.add(prepareToSendData(serialize("200"), endpoint, scope));
-            requests.add(prepareToSendRemoteKey(objectAddress, endpoint));
+            requests.add(prepareToSendData(tagID, serialize("200"), endpoint, scope));
+            requests.add(prepareToSendRemoteKey(tagID, objectAddress, endpoint));
             sendData(requests, worker, timeoutMs);
         }
     }
