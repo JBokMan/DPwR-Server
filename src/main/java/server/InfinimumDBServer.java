@@ -4,11 +4,13 @@ import de.hhu.bsinfo.infinileap.binding.*;
 import de.hhu.bsinfo.infinileap.example.util.Requests;
 import de.hhu.bsinfo.infinileap.util.CloseException;
 import de.hhu.bsinfo.infinileap.util.ResourcePool;
+import jdk.incubator.foreign.ResourceScope;
 import lombok.extern.slf4j.Slf4j;
 import model.PlasmaEntry;
 import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.commons.lang3.ArrayUtils;
 
+import java.lang.ref.Cleaner;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.concurrent.*;
@@ -138,36 +140,39 @@ public class InfinimumDBServer {
     }
 
     private void handleRequest(ConnectionRequest request) throws ControlException {
-        final var workerParameters = new WorkerParameters().setThreadMode(ThreadMode.SINGLE);
-        final Worker currentWorker = context.createWorker(workerParameters);
-        final var endpointParameters = new EndpointParameters().setConnectionRequest(request).setPeerErrorHandlingMode();
-        final Endpoint endpoint = currentWorker.createEndpoint(endpointParameters);
-        final int tagID = this.runningTagID.getValue();
-        this.runningTagID.increment();
-        try {
-            final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(tagID);
-            sendSingleMessage(tagID, byteBuffer.array(), endpoint, currentWorker, CONNECTION_TIMEOUT_MS);
-            final String operationName = deserialize(receiveData(tagID, OPERATION_MESSAGE_SIZE, currentWorker, CONNECTION_TIMEOUT_MS));
-            log.info("Received \"{}\"", operationName);
+        try (final ResourceScope scope = ResourceScope.newConfinedScope(Cleaner.create())) {
+            final var workerParameters = new WorkerParameters(scope).setThreadMode(ThreadMode.SINGLE);
+            final Worker currentWorker = context.createWorker(workerParameters);
+            final var endpointParameters = new EndpointParameters(scope).setConnectionRequest(request).setPeerErrorHandlingMode();
+            final Endpoint endpoint = currentWorker.createEndpoint(endpointParameters);
+            final int tagID = this.runningTagID.getValue();
+            this.runningTagID.increment();
+            try {
+                final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(tagID);
+                sendSingleMessage(tagID, byteBuffer.array(), endpoint, currentWorker, CONNECTION_TIMEOUT_MS);
+                final String operationName = deserialize(receiveData(tagID, OPERATION_MESSAGE_SIZE, currentWorker, CONNECTION_TIMEOUT_MS));
+                log.info("Received \"{}\"", operationName);
 
-            switch (operationName) {
-                case "PUT" -> {
-                    log.info("Start PUT operation");
-                    putOperation(tagID, currentWorker, endpoint);
+                switch (operationName) {
+                    case "PUT" -> {
+                        log.info("Start PUT operation");
+                        putOperation(tagID, currentWorker, endpoint);
+                    }
+                    case "GET" -> {
+                        log.info("Start GET operation");
+                        getOperation(tagID, currentWorker, endpoint);
+                    }
+                    case "DEL" -> {
+                        log.info("Start DEL operation");
+                        delOperation(tagID, currentWorker, endpoint);
+                    }
                 }
-                case "GET" -> {
-                    log.info("Start GET operation");
-                    getOperation(tagID, currentWorker, endpoint);
-                }
-                case "DEL" -> {
-                    log.info("Start DEL operation");
-                    delOperation(tagID, currentWorker, endpoint);
-                }
+            } catch (CloseException | TimeoutException | ExecutionException | ControlException e) {
+                e.printStackTrace();
+            } finally {
+                endpoint.close();
+                currentWorker.close();
             }
-        } catch (CloseException | TimeoutException | ExecutionException | ControlException e) {
-            e.printStackTrace();
-            endpoint.close();
-            currentWorker.close();
         }
     }
 
