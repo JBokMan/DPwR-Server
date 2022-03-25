@@ -8,13 +8,11 @@ import lombok.extern.slf4j.Slf4j;
 import model.PlasmaEntry;
 import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.commons.lang3.ArrayUtils;
-import org.apache.commons.lang3.SerializationException;
 
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.apache.commons.lang3.SerializationUtils.deserialize;
 import static org.apache.commons.lang3.SerializationUtils.serialize;
@@ -41,7 +39,8 @@ public class InfinimumDBServer {
     private Worker worker;
     private Context context;
     private final InetSocketAddress listenAddress;
-    private int runningTagID = 0;
+    private final SafeCounterWithoutLock runningTagID = new SafeCounterWithoutLock();
+    private ExecutorService executorService;
 
     public InfinimumDBServer(final String plasmaFilePath, final String listenAddress, final Integer listenPort) {
         this.listenAddress = new InetSocketAddress(listenAddress, listenPort);
@@ -95,8 +94,10 @@ public class InfinimumDBServer {
 
         // Create a worker
         log.info("Creating worker");
-        final var workerParameters = new WorkerParameters().setThreadMode(ThreadMode.MULTI);
+        final var workerParameters = new WorkerParameters().setThreadMode(ThreadMode.SINGLE);
         this.worker = pushResource(context.createWorker(workerParameters));
+
+        executorService = Executors.newFixedThreadPool(2);
 
         // Creating clean up hook
         final Thread cleanUpThread = new Thread(() -> {
@@ -117,42 +118,56 @@ public class InfinimumDBServer {
     }
 
     private void listenLoop() throws InterruptedException, ControlException {
-        final var connectionRequest = new AtomicReference<ConnectionRequest>();
-        final var listenerParams = new ListenerParameters().setListenAddress(listenAddress).setConnectionHandler(connectionRequest::set);
+        final var connectionQueue = new LinkedBlockingDeque<ConnectionRequest>();
+        final var listenerParams = new ListenerParameters().setListenAddress(listenAddress).setConnectionHandler(connectionQueue::add);
 
         log.info("Listening for new connection requests on {}", listenAddress);
         pushResource(this.worker.createListener(listenerParams));
         while (true) {
-            Requests.await(this.worker, connectionRequest);
-            final var endpointParameters = new EndpointParameters().setConnectionRequest(connectionRequest.get()).setPeerErrorHandlingMode();
-            final Endpoint endpoint = this.worker.createEndpoint(endpointParameters);
-            final int tagID = this.runningTagID++;
-            try {
-                final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(tagID);
-                sendSingleMessage(tagID, byteBuffer.array(), endpoint, worker, CONNECTION_TIMEOUT_MS);
-                final String operationName = deserialize(receiveData(tagID, OPERATION_MESSAGE_SIZE, worker, CONNECTION_TIMEOUT_MS));
-                log.info("Received \"{}\"", operationName);
-
-                switch (operationName) {
-                    case "PUT" -> {
-                        log.info("Start PUT operation");
-                        putOperation(tagID, worker, endpoint);
+            Requests.await(this.worker, connectionQueue);
+            while (!connectionQueue.isEmpty()) {
+                executorService.submit(() -> {
+                    try {
+                        handleRequest(connectionQueue.remove());
+                    } catch (ControlException e) {
+                        e.printStackTrace();
                     }
-                    case "GET" -> {
-                        log.info("Start GET operation");
-                        getOperation(tagID, worker, endpoint);
-                    }
-                    case "DEL" -> {
-                        log.info("Start DEL operation");
-                        delOperation(tagID, worker, endpoint);
-                    }
-                }
-            } catch (final SerializationException | ExecutionException | TimeoutException | CloseException e) {
-                log.error(e.getMessage());
-            } finally {
-                endpoint.closeNonBlocking();
-                connectionRequest.set(null);
+                });
             }
+        }
+    }
+
+    private void handleRequest(ConnectionRequest request) throws ControlException {
+        final var workerParameters = new WorkerParameters().setThreadMode(ThreadMode.SINGLE);
+        final Worker currentWorker = context.createWorker(workerParameters);
+        final var endpointParameters = new EndpointParameters().setConnectionRequest(request).setPeerErrorHandlingMode();
+        final Endpoint endpoint = currentWorker.createEndpoint(endpointParameters);
+        final int tagID = this.runningTagID.getValue();
+        this.runningTagID.increment();
+        try {
+            final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(tagID);
+            sendSingleMessage(tagID, byteBuffer.array(), endpoint, currentWorker, CONNECTION_TIMEOUT_MS);
+            final String operationName = deserialize(receiveData(tagID, OPERATION_MESSAGE_SIZE, currentWorker, CONNECTION_TIMEOUT_MS));
+            log.info("Received \"{}\"", operationName);
+
+            switch (operationName) {
+                case "PUT" -> {
+                    log.info("Start PUT operation");
+                    putOperation(tagID, currentWorker, endpoint);
+                }
+                case "GET" -> {
+                    log.info("Start GET operation");
+                    getOperation(tagID, currentWorker, endpoint);
+                }
+                case "DEL" -> {
+                    log.info("Start DEL operation");
+                    delOperation(tagID, currentWorker, endpoint);
+                }
+            }
+        } catch (CloseException | TimeoutException | ExecutionException | ControlException e) {
+            e.printStackTrace();
+            endpoint.close();
+            currentWorker.close();
         }
     }
 
@@ -244,5 +259,23 @@ public class InfinimumDBServer {
             sendSingleMessage(tagID, serialize("404"), endpoint, worker, CONNECTION_TIMEOUT_MS);
         }
         log.info("Del operation completed \n");
+    }
+}
+
+class SafeCounterWithoutLock {
+    private final AtomicInteger counter = new AtomicInteger(0);
+
+    public int getValue() {
+        return counter.get();
+    }
+
+    public void increment() {
+        while (true) {
+            int existingValue = getValue();
+            int newValue = existingValue + 1;
+            if (counter.compareAndSet(existingValue, newValue)) {
+                return;
+            }
+        }
     }
 }
