@@ -168,7 +168,7 @@ public class InfinimumDBServer {
                     }
                 }
             } catch (CloseException | TimeoutException | ExecutionException | ControlException e) {
-                e.printStackTrace();
+                log.error(e.getMessage());
             } finally {
                 endpoint.close();
                 currentWorker.close();
