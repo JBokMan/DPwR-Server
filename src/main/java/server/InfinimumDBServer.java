@@ -127,10 +127,11 @@ public class InfinimumDBServer {
         while (true) {
             Requests.await(this.worker, connectionQueue);
             while (!connectionQueue.isEmpty()) {
+                final ConnectionRequest request = connectionQueue.remove();
                 executorService.submit(() -> {
                     try {
-                        handleRequest(connectionQueue.remove());
-                    } catch (ControlException e) {
+                        handleRequest(request);
+                    } catch (final ControlException e) {
                         e.printStackTrace();
                     }
                 });
