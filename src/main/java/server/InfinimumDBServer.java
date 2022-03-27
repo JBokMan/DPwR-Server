@@ -211,34 +211,39 @@ public class InfinimumDBServer {
         final String keyToGet = receiveKey(tagID, worker, CONNECTION_TIMEOUT_MS);
         final byte[] id = generateID(keyToGet);
 
-        final ByteBuffer objectBuffer = plasmaClient.getObjAsByteBuffer(id, PLASMA_TIMEOUT_MS, false);
-        final PlasmaEntry entry = getPlasmaEntryFromBuffer(objectBuffer);
+        if (plasmaClient.contains(id)) {
+            final ByteBuffer objectBuffer = plasmaClient.getObjAsByteBuffer(id, PLASMA_TIMEOUT_MS, false);
+            final PlasmaEntry entry = getPlasmaEntryFromBuffer(objectBuffer);
 
-        if (keyToGet.equals(entry.key)) {
-            log.info("Entry with id: {} has key: {}", id, keyToGet);
+            if (keyToGet.equals(entry.key)) {
+                log.info("Entry with id: {} has key: {}", id, keyToGet);
 
-            sendObjectAddressAndStatusCode(tagID, objectBuffer, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
-
-            // Wait for client to signal successful transmission
-            final String statusCode = deserialize(receiveData(tagID, 10, worker, CONNECTION_TIMEOUT_MS));
-            plasmaClient.release(id);
-            log.info("Received status code \"{}\"", statusCode);
-        } else {
-            log.warn("Entry with id: {} has not key: {}", id, keyToGet);
-            final ByteBuffer bufferOfCorrectEntry = findEntryWithKey(plasmaClient, keyToGet, objectBuffer, PLASMA_TIMEOUT_MS);
-
-            if (bufferOfCorrectEntry != null) {
-                log.info("Found entry with key: {}", keyToGet);
-
-                sendObjectAddressAndStatusCode(tagID, bufferOfCorrectEntry, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
+                sendObjectAddressAndStatusCode(tagID, objectBuffer, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
 
                 // Wait for client to signal successful transmission
                 final String statusCode = deserialize(receiveData(tagID, 10, worker, CONNECTION_TIMEOUT_MS));
+                plasmaClient.release(id);
                 log.info("Received status code \"{}\"", statusCode);
             } else {
-                log.warn("Not found entry with key: {}", keyToGet);
-                sendSingleMessage(tagID, serialize("404"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+                log.warn("Entry with id: {} has not key: {}", id, keyToGet);
+                final ByteBuffer bufferOfCorrectEntry = findEntryWithKey(plasmaClient, keyToGet, objectBuffer, PLASMA_TIMEOUT_MS);
+
+                if (bufferOfCorrectEntry != null) {
+                    log.info("Found entry with key: {}", keyToGet);
+
+                    sendObjectAddressAndStatusCode(tagID, bufferOfCorrectEntry, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
+
+                    // Wait for client to signal successful transmission
+                    final String statusCode = deserialize(receiveData(tagID, 10, worker, CONNECTION_TIMEOUT_MS));
+                    log.info("Received status code \"{}\"", statusCode);
+                } else {
+                    log.warn("Not found entry with key: {}", keyToGet);
+                    sendSingleMessage(tagID, serialize("404"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+                }
             }
+        } else {
+            log.warn("Not found entry with key: {}", keyToGet);
+            sendSingleMessage(tagID, serialize("404"), endpoint, worker, CONNECTION_TIMEOUT_MS);
         }
         log.info("Get operation completed \n");
     }
