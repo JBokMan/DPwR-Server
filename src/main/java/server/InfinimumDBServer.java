@@ -10,7 +10,6 @@ import model.PlasmaEntry;
 import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.commons.lang3.ArrayUtils;
 
-import java.lang.ref.Cleaner;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.concurrent.*;
@@ -139,8 +138,8 @@ public class InfinimumDBServer {
         }
     }
 
-    private void handleRequest(ConnectionRequest request) throws ControlException {
-        try (final ResourceScope scope = ResourceScope.newConfinedScope(Cleaner.create())) {
+    private void handleRequest(final ConnectionRequest request) throws ControlException {
+        try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
             final var workerParameters = new WorkerParameters(scope).setThreadMode(ThreadMode.SINGLE);
             final Worker currentWorker = context.createWorker(workerParameters);
             final var endpointParameters = new EndpointParameters(scope).setConnectionRequest(request).setPeerErrorHandlingMode();

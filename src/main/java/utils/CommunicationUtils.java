@@ -134,7 +134,7 @@ public class CommunicationUtils {
     }
 
     public static void sendSingleMessage(final int tagID, final byte[] data, final Endpoint endpoint, final Worker worker, final int timeoutMs) throws TimeoutException {
-        try (final ResourceScope scope = ResourceScope.newConfinedScope(Cleaner.create())) {
+        try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
             final Long request = prepareToSendData(tagID, data, endpoint, scope);
             sendData(List.of(request), worker, timeoutMs);
         }
@@ -142,7 +142,7 @@ public class CommunicationUtils {
 
     public static byte[] receiveData(final int tagID, final int size, final Worker worker, final int timeoutMs) throws TimeoutException {
         log.info("Receiving message");
-        try (final ResourceScope scope = ResourceScope.newConfinedScope(Cleaner.create())) {
+        try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
             final MemorySegment buffer = MemorySegment.allocateNative(size, scope);
             final long request = worker.receiveTagged(buffer, Tag.of(tagID), new RequestParameters(scope));
             awaitRequestIfNecessary(request, worker, timeoutMs);
@@ -205,7 +205,7 @@ public class CommunicationUtils {
 
         // Send status and object address
         final ArrayList<Long> requests = new ArrayList<>();
-        try (final ResourceScope scope = ResourceScope.newConfinedScope(Cleaner.create())) {
+        try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
             requests.add(prepareToSendData(tagID, serialize("200"), endpoint, scope));
             requests.add(prepareToSendRemoteKey(tagID, objectAddress, endpoint));
             sendData(requests, worker, timeoutMs);
