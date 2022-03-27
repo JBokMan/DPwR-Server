@@ -119,11 +119,11 @@ public class InfinimumDBServer {
     }
 
     private void listenLoop() throws InterruptedException, ControlException {
-        final var connectionQueue = new LinkedBlockingDeque<ConnectionRequest>();
+        final var connectionQueue = new LinkedBlockingQueue<ConnectionRequest>();
         final var listenerParams = new ListenerParameters().setListenAddress(listenAddress).setConnectionHandler(connectionQueue::add);
-
         log.info("Listening for new connection requests on {}", listenAddress);
         pushResource(this.worker.createListener(listenerParams));
+
         while (true) {
             Requests.await(this.worker, connectionQueue);
             while (!connectionQueue.isEmpty()) {
