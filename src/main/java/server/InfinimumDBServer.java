@@ -166,7 +166,7 @@ public class InfinimumDBServer {
                         delOperation(tagID, currentWorker, endpoint);
                     }
                 }
-            } catch (CloseException | TimeoutException | ExecutionException | ControlException e) {
+            } catch (final CloseException | TimeoutException | ExecutionException | ControlException e) {
                 log.error(e.getMessage());
             } finally {
                 endpoint.close();
@@ -275,8 +275,8 @@ class SafeCounterWithoutLock {
 
     public void increment() {
         while (true) {
-            int existingValue = getValue();
-            int newValue = existingValue + 1;
+            final int existingValue = getValue();
+            final int newValue = existingValue + 1;
             if (counter.compareAndSet(existingValue, newValue)) {
                 return;
             }
