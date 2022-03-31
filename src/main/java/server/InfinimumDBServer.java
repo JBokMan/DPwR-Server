@@ -33,8 +33,7 @@ public class InfinimumDBServer {
     private final String plasmaFilePath;
 
     private final ResourcePool resources = new ResourcePool();
-    private static final long DEFAULT_REQUEST_SIZE = 1024L;
-    private static final ContextParameters.Feature[] FEATURE_SET = {ContextParameters.Feature.TAG, ContextParameters.Feature.RMA, ContextParameters.Feature.WAKEUP, ContextParameters.Feature.AM, ContextParameters.Feature.ATOMIC_32, ContextParameters.Feature.ATOMIC_64, ContextParameters.Feature.STREAM};
+    private static final ContextParameters.Feature[] FEATURE_SET = {ContextParameters.Feature.TAG, ContextParameters.Feature.RMA, ContextParameters.Feature.WAKEUP};
     private static final int CONNECTION_TIMEOUT_MS = 750;
     private static final int PLASMA_TIMEOUT_MS = 500;
     private Worker worker;
@@ -83,22 +82,17 @@ public class InfinimumDBServer {
         NativeLogger.enable();
         log.info("Using UCX version {}", Context.getVersion());
 
-        // Create context parameters
-        final var contextParameters = new ContextParameters().setFeatures(FEATURE_SET).setRequestSize(DEFAULT_REQUEST_SIZE);
-
-        // Read configuration (Environment Variables)
-        final var configuration = pushResource(Configuration.read());
-
         // Initialize UCP context
         log.info("Initializing context");
-        this.context = pushResource(Context.initialize(contextParameters, configuration));
+        final ContextParameters contextParameters = new ContextParameters().setFeatures(FEATURE_SET);
+        this.context = pushResource(Context.initialize(contextParameters, null));
 
         // Create a worker
         log.info("Creating worker");
-        final var workerParameters = new WorkerParameters().setThreadMode(ThreadMode.SINGLE);
+        final WorkerParameters workerParameters = new WorkerParameters().setThreadMode(ThreadMode.SINGLE);
         this.worker = pushResource(context.createWorker(workerParameters));
 
-        executorService = Executors.newFixedThreadPool(2);
+        this.executorService = Executors.newFixedThreadPool(2);
 
         // Creating clean up hook
         final Thread cleanUpThread = new Thread(() -> {
