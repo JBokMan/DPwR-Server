@@ -9,7 +9,7 @@
         </Async>
     </Appenders>
     <Loggers>
-        <Root level="debug">
+        <Root level="all">
             <AppenderRef ref="ConsoleAsync"/>
         </Root>
     </Loggers>
