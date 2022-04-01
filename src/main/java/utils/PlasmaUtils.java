@@ -22,7 +22,6 @@ public class PlasmaUtils {
         while (!key.equals(currentEntry.key) && plasmaClient.contains(nextID)) {
             currentBuffer = plasmaClient.getObjAsByteBuffer(nextID, plasmaTimeoutMs, false);
             currentEntry = getPlasmaEntryFromBuffer(currentBuffer);
-            plasmaClient.release(nextID);
             nextID = currentEntry.nextPlasmaID;
         }
         if (key.equals(currentEntry.key)) {
@@ -41,7 +40,6 @@ public class PlasmaUtils {
         while (plasmaClient.contains(nextID)) {
             currentID = nextID;
             final PlasmaEntry nextPlasmaEntry = deserialize(plasmaClient.get(nextID, plasmaTimeoutMs, false));
-            plasmaClient.release(nextID);
             log.info(nextPlasmaEntry.key);
             if (nextPlasmaEntry.key.equals(keyToCheck)) {
                 return new byte[0];
@@ -95,10 +93,8 @@ public class PlasmaUtils {
             if (plasmaClient.contains(nextID)) {
                 log.info("Entry with next id {} exists", nextID);
                 final PlasmaEntry nextEntry = deserialize(plasmaClient.get(nextID, plasmaTimeoutMs, false));
-                plasmaClient.release(startID);
                 return findAndDeleteEntryWithKey(plasmaClient, keyToDelete, nextEntry, nextID, plasmaTimeoutMs);
             } else {
-                plasmaClient.release(startID);
                 log.info("Entry with next id {} does not exist", nextID);
                 return "404";
             }

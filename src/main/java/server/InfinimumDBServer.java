@@ -180,7 +180,6 @@ public class InfinimumDBServer {
         if (plasmaClient.contains(id)) {
             log.warn("Plasma does contain the id");
             final PlasmaEntry plasmaEntry = deserialize(plasmaClient.get(id, PLASMA_TIMEOUT_MS, false));
-            plasmaClient.release(id);
             final byte[] objectIdWithFreeNextID = getObjectIdOfNextEntryWithEmptyNextID(plasmaClient, plasmaEntry, id, keyToPut, PLASMA_TIMEOUT_MS);
 
             if (ArrayUtils.isEmpty(objectIdWithFreeNextID)) {
@@ -218,7 +217,6 @@ public class InfinimumDBServer {
 
                 // Wait for client to signal successful transmission
                 final String statusCode = deserialize(receiveData(tagID, 10, worker, CONNECTION_TIMEOUT_MS));
-                plasmaClient.release(id);
                 log.info("Received status code \"{}\"", statusCode);
             } else {
                 log.warn("Entry with id: {} has not key: {}", id, keyToGet);
