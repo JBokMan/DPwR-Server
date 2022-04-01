@@ -41,6 +41,7 @@ public class InfinimumDBServer {
     private final InetSocketAddress listenAddress;
     private final SafeCounterWithoutLock runningTagID = new SafeCounterWithoutLock();
     private ExecutorService executorService;
+    private ListenerParameters listenerParameters;
 
     public InfinimumDBServer(final String plasmaFilePath, final String listenAddress, final Integer listenPort) {
         this.listenAddress = new InetSocketAddress(listenAddress, listenPort);
@@ -114,9 +115,10 @@ public class InfinimumDBServer {
 
     private void listenLoop() throws InterruptedException, ControlException {
         final var connectionQueue = new LinkedBlockingQueue<ConnectionRequest>();
-        final var listenerParams = new ListenerParameters().setListenAddress(listenAddress).setConnectionHandler(connectionQueue::add);
+
         log.info("Listening for new connection requests on {}", listenAddress);
-        pushResource(this.worker.createListener(listenerParams));
+        this.listenerParameters = new ListenerParameters().setListenAddress(listenAddress).setConnectionHandler(connectionQueue::add);
+        pushResource(this.worker.createListener(this.listenerParameters));
 
         while (true) {
             Requests.await(this.worker, connectionQueue);
@@ -143,7 +145,7 @@ public class InfinimumDBServer {
             this.runningTagID.increment();
             try {
                 final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(tagID);
-                sendSingleMessage(tagID, byteBuffer.array(), endpoint, currentWorker, CONNECTION_TIMEOUT_MS);
+                sendSingleMessage(0, byteBuffer.array(), endpoint, currentWorker, CONNECTION_TIMEOUT_MS);
                 final String operationName = deserialize(receiveData(tagID, OPERATION_MESSAGE_SIZE, currentWorker, CONNECTION_TIMEOUT_MS));
                 log.info("Received \"{}\"", operationName);
 
