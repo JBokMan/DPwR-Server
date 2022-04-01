@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import model.PlasmaEntry;
 import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.commons.lang3.ArrayUtils;
+import utils.WorkerPool;
 
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
@@ -42,6 +43,7 @@ public class InfinimumDBServer {
     private final SafeCounterWithoutLock runningTagID = new SafeCounterWithoutLock();
     private ExecutorService executorService;
     private ListenerParameters listenerParameters;
+    private WorkerPool workerPool;
 
     public InfinimumDBServer(final String plasmaFilePath, final String listenAddress, final Integer listenPort) {
         this.listenAddress = new InetSocketAddress(listenAddress, listenPort);
@@ -93,6 +95,7 @@ public class InfinimumDBServer {
         final WorkerParameters workerParameters = new WorkerParameters().setThreadMode(ThreadMode.SINGLE);
         this.worker = pushResource(context.createWorker(workerParameters));
 
+        this.workerPool = new WorkerPool(6, workerParameters, context);
         this.executorService = Executors.newFixedThreadPool(2);
 
         // Creating clean up hook
@@ -124,9 +127,10 @@ public class InfinimumDBServer {
             Requests.await(this.worker, connectionQueue);
             while (!connectionQueue.isEmpty()) {
                 final ConnectionRequest request = connectionQueue.remove();
+                final Worker currentWorker = this.workerPool.getNextWorker();
                 executorService.submit(() -> {
                     try {
-                        handleRequest(request);
+                        handleRequest(request, currentWorker);
                     } catch (final ControlException e) {
                         e.printStackTrace();
                     }
@@ -135,10 +139,8 @@ public class InfinimumDBServer {
         }
     }
 
-    private void handleRequest(final ConnectionRequest request) throws ControlException {
+    private void handleRequest(final ConnectionRequest request, Worker currentWorker) throws ControlException {
         try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
-            final var workerParameters = new WorkerParameters(scope).setThreadMode(ThreadMode.SINGLE);
-            final Worker currentWorker = context.createWorker(workerParameters);
             final var endpointParameters = new EndpointParameters(scope).setConnectionRequest(request).setPeerErrorHandlingMode();
             final Endpoint endpoint = currentWorker.createEndpoint(endpointParameters);
             final int tagID = this.runningTagID.getValue();
@@ -167,7 +169,6 @@ public class InfinimumDBServer {
                 log.error(e.getMessage());
             } finally {
                 endpoint.close();
-                currentWorker.close();
             }
         }
     }
