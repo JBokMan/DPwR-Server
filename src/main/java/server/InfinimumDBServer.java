@@ -9,10 +9,16 @@ import lombok.extern.slf4j.Slf4j;
 import model.PlasmaEntry;
 import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.commons.lang3.ArrayUtils;
+import org.apache.commons.lang3.SerializationUtils;
 import utils.WorkerPool;
 
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -27,8 +33,10 @@ import static utils.PlasmaUtils.*;
 public class InfinimumDBServer {
 
     private static final int OPERATION_MESSAGE_SIZE = 10;
-    static final int serverID = 0;
-    int serverCount = 1;
+
+    int serverID = -1;
+    private final AtomicInteger serverCount = new AtomicInteger(1);
+    private final Map<Integer, InetSocketAddress> serverMap = new HashMap<>();
 
     private PlasmaClient plasmaClient;
     private final String plasmaFilePath;
@@ -45,19 +53,20 @@ public class InfinimumDBServer {
     private ListenerParameters listenerParameters;
     private WorkerPool workerPool;
 
-    public InfinimumDBServer(final String plasmaFilePath, final String listenAddress, final Integer listenPort) {
+    public InfinimumDBServer(final String plasmaFilePath, final String listenAddress, final Integer listenPort) throws UnknownHostException {
         this.listenAddress = new InetSocketAddress(listenAddress, listenPort);
         this.plasmaFilePath = plasmaFilePath;
         connectPlasma();
+        this.serverID = 0;
+        serverMap.put(0, new InetSocketAddress(InetAddress.getLocalHost(), listenPort));
     }
 
-    /*public InfinimumDBServer(String plasmaFilePath, String listenAddress, Integer listeningPort,
-                             String mainServerHostAddress, Integer mainServerPort) {
+    public InfinimumDBServer(final String plasmaFilePath, final String listenAddress, final Integer listenPort, final String mainServerHostAddress, final Integer mainServerPort) throws ControlException, TimeoutException, UnknownHostException {
+        this.listenAddress = new InetSocketAddress(listenAddress, listenPort);
         this.plasmaFilePath = plasmaFilePath;
-        this.infinileapServer = new InfinileapServer(listenAddress);
-        this.infinileapServer.registerOnMessageEventListener(this);
         connectPlasma();
-    }*/
+        registerAtMain(new InetSocketAddress(mainServerHostAddress, mainServerPort), listenPort);
+    }
 
     private void connectPlasma() {
         System.loadLibrary("plasma_java");
@@ -66,6 +75,50 @@ public class InfinimumDBServer {
         } catch (final Exception e) {
             if (log.isErrorEnabled()) log.error("PlasmaDB could not be reached");
         }
+    }
+
+    private void registerAtMain(final InetSocketAddress mainServerAddress, final int listenPort) throws ControlException, TimeoutException, UnknownHostException {
+        final ContextParameters contextParameters = new ContextParameters().setFeatures(ContextParameters.Feature.TAG);
+        final Context context = Context.initialize(contextParameters, null);
+
+        final WorkerParameters workerParameters = new WorkerParameters().setThreadMode(ThreadMode.SINGLE);
+        final Worker worker = context.createWorker(workerParameters);
+
+        final EndpointParameters endpointParams = new EndpointParameters().setRemoteAddress(mainServerAddress).setPeerErrorHandlingMode();
+        final Endpoint endpoint = worker.createEndpoint(endpointParams);
+
+        final int tagID = receiveTagID(worker, CONNECTION_TIMEOUT_MS);
+        sendSingleMessage(tagID, SerializationUtils.serialize("REG"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+
+        final String statusCode = SerializationUtils.deserialize(receiveData(tagID, 10, worker, CONNECTION_TIMEOUT_MS));
+        log.info(String.valueOf(serialize(InetAddress.getLocalHost()).length));
+        if ("200".equals(statusCode)) {
+            final byte[] serverCountBytes = receiveData(tagID, Integer.BYTES, worker, CONNECTION_TIMEOUT_MS);
+            final int serverCount = ByteBuffer.wrap(serverCountBytes).getInt();
+            this.serverCount.set(serverCount);
+            this.serverID = serverCount - 1;
+
+            for (int i = 0; i < serverCount; i++) {
+                final byte[] addressSizeBytes = receiveData(tagID, Integer.BYTES, worker, CONNECTION_TIMEOUT_MS);
+                final ByteBuffer byteBuffer = ByteBuffer.wrap(addressSizeBytes);
+                final int addressSize = byteBuffer.getInt();
+                final byte[] serverAddressBytes = receiveData(tagID, addressSize, worker, CONNECTION_TIMEOUT_MS);
+                final InetSocketAddress inetSocketAddress = deserialize(serverAddressBytes);
+                serverMap.put(i, inetSocketAddress);
+            }
+            serverMap.put(serverCount - 1, new InetSocketAddress(InetAddress.getLocalHost(), listenPort));
+
+            final byte[] addressBytes = SerializationUtils.serialize(new InetSocketAddress(InetAddress.getLocalHost(), this.listenAddress.getPort()));
+            final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(addressBytes.length);
+            sendSingleMessage(tagID, byteBuffer.array(), endpoint, worker, CONNECTION_TIMEOUT_MS);
+            sendSingleMessage(tagID, addressBytes, endpoint, worker, CONNECTION_TIMEOUT_MS);
+        }
+        log.info("Received status code: \"{}\"", statusCode);
+        log.info(String.valueOf(this.serverID));
+        for (final var entry : this.serverMap.entrySet()) {
+            log.info(entry.getKey() + "/" + entry.getValue());
+        }
+
     }
 
     public void listen() {
@@ -139,7 +192,7 @@ public class InfinimumDBServer {
         }
     }
 
-    private void handleRequest(final ConnectionRequest request, Worker currentWorker) throws ControlException {
+    private void handleRequest(final ConnectionRequest request, final Worker currentWorker) throws ControlException {
         try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
             final var endpointParameters = new EndpointParameters(scope).setConnectionRequest(request).setPeerErrorHandlingMode();
             final Endpoint endpoint = currentWorker.createEndpoint(endpointParameters);
@@ -164,9 +217,15 @@ public class InfinimumDBServer {
                         log.info("Start DEL operation");
                         delOperation(tagID, currentWorker, endpoint);
                     }
+                    case "REG" -> {
+                        log.info("Start REG operation");
+                        regOperation(tagID, currentWorker, endpoint);
+                    }
                 }
             } catch (final CloseException | TimeoutException | ExecutionException | ControlException e) {
                 log.error(e.getMessage());
+            } catch (final Exception e) {
+                e.printStackTrace();
             } finally {
                 endpoint.close();
             }
@@ -264,6 +323,39 @@ public class InfinimumDBServer {
             sendSingleMessage(tagID, serialize("404"), endpoint, worker, CONNECTION_TIMEOUT_MS);
         }
         log.info("Del operation completed \n");
+    }
+
+    private void regOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws Exception {
+        //TODO exception handling
+        if (this.serverID == 0) {
+            try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
+                final ArrayList<Long> requests = new ArrayList<>();
+                requests.add(prepareToSendData(tagID, SerializationUtils.serialize("200"), endpoint, scope));
+                // Send the current server count
+                final int currentServerCount = this.serverCount.incrementAndGet();
+                log.info(String.valueOf(ByteBuffer.allocate(4).putInt(currentServerCount).array().length));
+                requests.add(prepareToSendData(tagID, ByteBuffer.allocate(4).putInt(currentServerCount).array(), endpoint, scope));
+                for (int i = 0; i < currentServerCount; i++) {
+                    final byte[] addressBytes = SerializationUtils.serialize(serverMap.get(i));
+                    final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(addressBytes.length);
+                    requests.add(prepareToSendData(tagID, byteBuffer.array(), endpoint, scope));
+                    requests.add(prepareToSendData(tagID, addressBytes, endpoint, scope));
+                }
+                sendData(requests, worker, CONNECTION_TIMEOUT_MS);
+                final byte[] addressSizeBytes = receiveData(tagID, Integer.BYTES, worker, CONNECTION_TIMEOUT_MS);
+                final ByteBuffer byteBuffer = ByteBuffer.wrap(addressSizeBytes);
+                final int addressSize = byteBuffer.getInt();
+                final byte[] addressBytes = receiveData(tagID, addressSize, worker, CONNECTION_TIMEOUT_MS);
+                this.serverMap.put(currentServerCount - 1, SerializationUtils.deserialize(addressBytes));
+            }
+
+        } else {
+            sendSingleMessage(tagID, SerializationUtils.serialize("400"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+        }
+        log.info(String.valueOf(this.serverID));
+        for (final var entry : this.serverMap.entrySet()) {
+            log.info(entry.getKey() + "/" + entry.getValue());
+        }
     }
 }
 

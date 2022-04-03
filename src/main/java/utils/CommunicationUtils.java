@@ -176,6 +176,14 @@ public class CommunicationUtils {
         }
     }
 
+    public static int receiveTagID(final Worker worker, final int timeoutMs) throws TimeoutException {
+        final byte[] tagIDBytes = receiveData(0, Integer.BYTES, worker, timeoutMs);
+        final ByteBuffer byteBuffer = ByteBuffer.wrap(tagIDBytes);
+        final int tagID = byteBuffer.getInt();
+        log.info("Received \"{}\"", tagID);
+        return tagID;
+    }
+
     public static String receiveKey(final int tagID, final Worker worker, final int timeoutMs) throws TimeoutException {
         // Get key size in bytes
         final byte[] keySizeBytes = receiveData(tagID, Integer.BYTES, worker, timeoutMs);
