@@ -30,7 +30,7 @@ import static utils.HashUtils.generateNextIdOfId;
 import static utils.PlasmaUtils.*;
 
 @Slf4j
-public class InfinimumDBServer {
+public class DPwRServer {
 
     private static final int OPERATION_MESSAGE_SIZE = 10;
 
@@ -53,7 +53,7 @@ public class InfinimumDBServer {
     private ListenerParameters listenerParameters;
     private WorkerPool workerPool;
 
-    public InfinimumDBServer(final String plasmaFilePath, final String listenAddress, final Integer listenPort) throws UnknownHostException {
+    public DPwRServer(final String plasmaFilePath, final String listenAddress, final Integer listenPort) throws UnknownHostException {
         this.listenAddress = new InetSocketAddress(listenAddress, listenPort);
         this.plasmaFilePath = plasmaFilePath;
         connectPlasma();
@@ -61,7 +61,7 @@ public class InfinimumDBServer {
         serverMap.put(0, new InetSocketAddress(InetAddress.getLocalHost(), listenPort));
     }
 
-    public InfinimumDBServer(final String plasmaFilePath, final String listenAddress, final Integer listenPort, final String mainServerHostAddress, final Integer mainServerPort) throws ControlException, TimeoutException, UnknownHostException {
+    public DPwRServer(final String plasmaFilePath, final String listenAddress, final Integer listenPort, final String mainServerHostAddress, final Integer mainServerPort) throws ControlException, TimeoutException, UnknownHostException {
         this.listenAddress = new InetSocketAddress(listenAddress, listenPort);
         this.plasmaFilePath = plasmaFilePath;
         connectPlasma();
