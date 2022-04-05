@@ -193,42 +193,36 @@ public class DPwRServer {
     }
 
     private void handleRequest(final ConnectionRequest request, final Worker currentWorker) throws ControlException {
-        try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
-            final var endpointParameters = new EndpointParameters(scope).setConnectionRequest(request).setPeerErrorHandlingMode();
-            final Endpoint endpoint = currentWorker.createEndpoint(endpointParameters);
+        try (final ResourceScope scope = ResourceScope.newConfinedScope(); final Endpoint endpoint = currentWorker.createEndpoint(new EndpointParameters(scope).setConnectionRequest(request).setPeerErrorHandlingMode())) {
+            // Send tagID to client
             final int tagID = this.runningTagID.getValue();
             this.runningTagID.increment();
-            try {
-                final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(tagID);
-                sendSingleMessage(0, byteBuffer.array(), endpoint, currentWorker, CONNECTION_TIMEOUT_MS);
-                final String operationName = deserialize(receiveData(tagID, OPERATION_MESSAGE_SIZE, currentWorker, CONNECTION_TIMEOUT_MS));
-                log.info("Received \"{}\"", operationName);
+            final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(tagID);
+            sendSingleMessage(0, byteBuffer.array(), endpoint, currentWorker, CONNECTION_TIMEOUT_MS);
 
-                switch (operationName) {
-                    case "PUT" -> {
-                        log.info("Start PUT operation");
-                        putOperation(tagID, currentWorker, endpoint);
-                    }
-                    case "GET" -> {
-                        log.info("Start GET operation");
-                        getOperation(tagID, currentWorker, endpoint);
-                    }
-                    case "DEL" -> {
-                        log.info("Start DEL operation");
-                        delOperation(tagID, currentWorker, endpoint);
-                    }
-                    case "REG" -> {
-                        log.info("Start REG operation");
-                        regOperation(tagID, currentWorker, endpoint);
-                    }
+            final String operationName = deserialize(receiveData(tagID, OPERATION_MESSAGE_SIZE, currentWorker, CONNECTION_TIMEOUT_MS));
+            log.info("Received \"{}\"", operationName);
+
+            switch (operationName) {
+                case "PUT" -> {
+                    log.info("Start PUT operation");
+                    putOperation(tagID, currentWorker, endpoint);
                 }
-            } catch (final CloseException | TimeoutException | ExecutionException | ControlException e) {
-                log.error(e.getMessage());
-            } catch (final Exception e) {
-                e.printStackTrace();
-            } finally {
-                endpoint.close();
+                case "GET" -> {
+                    log.info("Start GET operation");
+                    getOperation(tagID, currentWorker, endpoint);
+                }
+                case "DEL" -> {
+                    log.info("Start DEL operation");
+                    delOperation(tagID, currentWorker, endpoint);
+                }
+                case "REG" -> {
+                    log.info("Start REG operation");
+                    regOperation(tagID, currentWorker, endpoint);
+                }
             }
+        } catch (final NullPointerException | CloseException | TimeoutException | ExecutionException | ControlException e) {
+            log.error(e.getMessage());
         }
     }
 
@@ -302,7 +296,7 @@ public class DPwRServer {
         log.info("Get operation completed \n");
     }
 
-    private void delOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws ExecutionException, TimeoutException {
+    private void delOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws ExecutionException, TimeoutException, NullPointerException {
         final String keyToDelete = receiveKey(tagID, worker, CONNECTION_TIMEOUT_MS);
         final byte[] id = generateID(keyToDelete);
 
@@ -325,7 +319,7 @@ public class DPwRServer {
         log.info("Del operation completed \n");
     }
 
-    private void regOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws Exception {
+    private void regOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException {
         //TODO exception handling
         if (this.serverID == 0) {
             try (final ResourceScope scope = ResourceScope.newConfinedScope()) {

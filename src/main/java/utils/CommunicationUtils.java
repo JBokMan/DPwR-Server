@@ -56,12 +56,12 @@ public class CommunicationUtils {
     }
 
     public static void sendNewEntryAddress(final int tagID, final PlasmaClient plasmaClient, final byte[] id, final int entrySize, final Endpoint endpoint, final Worker worker, final Context context, final int timeoutMs) throws TimeoutException, ControlException, CloseException {
-        // signal id was not already in plasma
-        sendSingleMessage(tagID, serialize("200"), endpoint, worker, timeoutMs);
         try {
             // create new plasma entry with correct id and size and send its memory address to client
             final ByteBuffer byteBuffer = plasmaClient.create(id, entrySize, new byte[0]);
             final MemoryDescriptor objectAddress = getMemoryDescriptorOfByteBuffer(byteBuffer, context);
+            // signal id was not already in plasma
+            sendSingleMessage(tagID, serialize("200"), endpoint, worker, timeoutMs);
             sendRemoteKey(tagID, objectAddress, endpoint, worker, timeoutMs);
         } catch (final TimeoutException e) {
             plasmaClient.seal(id);
