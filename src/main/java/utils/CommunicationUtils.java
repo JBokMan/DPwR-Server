@@ -26,6 +26,8 @@ import static utils.PlasmaUtils.updateNextIdOfEntry;
 @Slf4j
 public class CommunicationUtils {
 
+    final private static TimeUnit timeUnit = TimeUnit.MILLISECONDS;
+
     public static MemoryDescriptor getMemoryDescriptorOfByteBuffer(final ByteBuffer object, final Context context) throws ControlException, CloseException {
         final MemorySegment source = MemorySegment.ofByteBuffer(object);
         try (final MemoryRegion memoryRegion = context.mapMemory(source)) {
@@ -107,7 +109,6 @@ public class CommunicationUtils {
                 while (state(request) != Requests.State.COMPLETE && counter < timeoutMs) {
                     worker.progress();
                     try {
-                        final TimeUnit timeUnit = TimeUnit.MILLISECONDS;
                         synchronized (timeUnit) {
                             timeUnit.wait(1);
                         }
@@ -157,7 +158,6 @@ public class CommunicationUtils {
         while (state(request) != Requests.State.COMPLETE && counter < timeoutMs) {
             worker.progress();
             try {
-                final TimeUnit timeUnit = TimeUnit.MILLISECONDS;
                 synchronized (timeUnit) {
                     timeUnit.wait(1);
                 }

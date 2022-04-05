@@ -12,6 +12,7 @@ import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.SerializationUtils;
 import utils.WorkerPool;
 
+import java.net.ConnectException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
@@ -50,6 +51,8 @@ public class DPwRServer {
     private final InetSocketAddress listenAddress;
     private final SafeCounterWithoutLock runningTagID = new SafeCounterWithoutLock();
     private ExecutorService executorService;
+    @SuppressWarnings("FieldCanBeLocal")
+    // listener parameter need to stay in memory, since it holds the callback for new connection requests
     private ListenerParameters listenerParameters;
     private WorkerPool workerPool;
 
@@ -61,7 +64,7 @@ public class DPwRServer {
         serverMap.put(0, new InetSocketAddress(InetAddress.getLocalHost(), listenPort));
     }
 
-    public DPwRServer(final String plasmaFilePath, final String listenAddress, final Integer listenPort, final String mainServerHostAddress, final Integer mainServerPort) throws ControlException, TimeoutException, UnknownHostException {
+    public DPwRServer(final String plasmaFilePath, final String listenAddress, final Integer listenPort, final String mainServerHostAddress, final Integer mainServerPort) throws ControlException, TimeoutException, UnknownHostException, ConnectException {
         this.listenAddress = new InetSocketAddress(listenAddress, listenPort);
         this.plasmaFilePath = plasmaFilePath;
         connectPlasma();
@@ -77,48 +80,55 @@ public class DPwRServer {
         }
     }
 
-    private void registerAtMain(final InetSocketAddress mainServerAddress, final int listenPort) throws ControlException, TimeoutException, UnknownHostException {
-        final ContextParameters contextParameters = new ContextParameters().setFeatures(ContextParameters.Feature.TAG);
-        final Context context = Context.initialize(contextParameters, null);
+    private void registerAtMain(final InetSocketAddress mainServerAddress, final int listenPort) throws ControlException, TimeoutException, UnknownHostException, ConnectException {
+        try (final ResourcePool resourcePool = new ResourcePool(); final ResourceScope scope = ResourceScope.newConfinedScope()) {
+            final ContextParameters contextParameters = new ContextParameters(scope).setFeatures(ContextParameters.Feature.TAG);
+            final Context context = Context.initialize(contextParameters, null);
+            resourcePool.push(context);
 
-        final WorkerParameters workerParameters = new WorkerParameters().setThreadMode(ThreadMode.SINGLE);
-        final Worker worker = context.createWorker(workerParameters);
+            final WorkerParameters workerParameters = new WorkerParameters(scope).setThreadMode(ThreadMode.SINGLE);
+            final Worker worker = context.createWorker(workerParameters);
+            resourcePool.push(worker);
 
-        final EndpointParameters endpointParams = new EndpointParameters().setRemoteAddress(mainServerAddress).setPeerErrorHandlingMode();
-        final Endpoint endpoint = worker.createEndpoint(endpointParams);
+            final EndpointParameters endpointParams = new EndpointParameters(scope).setRemoteAddress(mainServerAddress).setPeerErrorHandlingMode();
+            final Endpoint endpoint = worker.createEndpoint(endpointParams);
+            resourcePool.push(endpoint);
 
-        final int tagID = receiveTagID(worker, CONNECTION_TIMEOUT_MS);
-        sendSingleMessage(tagID, SerializationUtils.serialize("REG"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+            final int tagID = receiveTagID(worker, CONNECTION_TIMEOUT_MS);
+            sendSingleMessage(tagID, SerializationUtils.serialize("REG"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+            final String statusCode = SerializationUtils.deserialize(receiveData(tagID, 10, worker, CONNECTION_TIMEOUT_MS));
+            log.info("Received status code: \"{}\"", statusCode);
 
-        final String statusCode = SerializationUtils.deserialize(receiveData(tagID, 10, worker, CONNECTION_TIMEOUT_MS));
-        log.info(String.valueOf(serialize(InetAddress.getLocalHost()).length));
-        if ("200".equals(statusCode)) {
-            final byte[] serverCountBytes = receiveData(tagID, Integer.BYTES, worker, CONNECTION_TIMEOUT_MS);
-            final int serverCount = ByteBuffer.wrap(serverCountBytes).getInt();
-            this.serverCount.set(serverCount);
-            this.serverID = serverCount - 1;
+            if ("200".equals(statusCode)) {
+                final byte[] serverCountBytes = receiveData(tagID, Integer.BYTES, worker, CONNECTION_TIMEOUT_MS);
+                final int serverCount = ByteBuffer.wrap(serverCountBytes).getInt();
+                this.serverCount.set(serverCount);
+                this.serverID = serverCount - 1;
 
-            for (int i = 0; i < serverCount; i++) {
-                final byte[] addressSizeBytes = receiveData(tagID, Integer.BYTES, worker, CONNECTION_TIMEOUT_MS);
-                final ByteBuffer byteBuffer = ByteBuffer.wrap(addressSizeBytes);
-                final int addressSize = byteBuffer.getInt();
-                final byte[] serverAddressBytes = receiveData(tagID, addressSize, worker, CONNECTION_TIMEOUT_MS);
-                final InetSocketAddress inetSocketAddress = deserialize(serverAddressBytes);
-                serverMap.put(i, inetSocketAddress);
+                for (int i = 0; i < serverCount; i++) {
+                    final byte[] addressSizeBytes = receiveData(tagID, Integer.BYTES, worker, CONNECTION_TIMEOUT_MS);
+                    final int addressSize = ByteBuffer.wrap(addressSizeBytes).getInt();
+                    final byte[] serverAddressBytes = receiveData(tagID, addressSize, worker, CONNECTION_TIMEOUT_MS);
+                    final InetSocketAddress inetSocketAddress = deserialize(serverAddressBytes);
+                    serverMap.put(i, inetSocketAddress);
+                }
+                serverMap.put(this.serverID, new InetSocketAddress(InetAddress.getLocalHost(), listenPort));
+
+                final byte[] addressBytes = SerializationUtils.serialize(serverMap.get(this.serverID));
+                final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(addressBytes.length);
+                sendSingleMessage(tagID, byteBuffer.array(), endpoint, worker, CONNECTION_TIMEOUT_MS);
+                sendSingleMessage(tagID, addressBytes, endpoint, worker, CONNECTION_TIMEOUT_MS);
+            } else {
+                throw new ConnectException("Main server could not be reached");
             }
-            serverMap.put(serverCount - 1, new InetSocketAddress(InetAddress.getLocalHost(), listenPort));
+            log.info(String.valueOf(this.serverID));
+            for (final var entry : this.serverMap.entrySet()) {
+                log.info(entry.getKey() + "/" + entry.getValue());
+            }
 
-            final byte[] addressBytes = SerializationUtils.serialize(new InetSocketAddress(InetAddress.getLocalHost(), this.listenAddress.getPort()));
-            final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(addressBytes.length);
-            sendSingleMessage(tagID, byteBuffer.array(), endpoint, worker, CONNECTION_TIMEOUT_MS);
-            sendSingleMessage(tagID, addressBytes, endpoint, worker, CONNECTION_TIMEOUT_MS);
+        } catch (final CloseException e) {
+            log.error(e.getMessage());
         }
-        log.info("Received status code: \"{}\"", statusCode);
-        log.info(String.valueOf(this.serverID));
-        for (final var entry : this.serverMap.entrySet()) {
-            log.info(entry.getKey() + "/" + entry.getValue());
-        }
-
     }
 
     public void listen() {
@@ -169,6 +179,7 @@ public class DPwRServer {
         return resource;
     }
 
+    @SuppressWarnings("InfiniteLoopStatement")
     private void listenLoop() throws InterruptedException, ControlException {
         final var connectionQueue = new LinkedBlockingQueue<ConnectionRequest>();
 
@@ -327,8 +338,7 @@ public class DPwRServer {
                 requests.add(prepareToSendData(tagID, SerializationUtils.serialize("200"), endpoint, scope));
                 // Send the current server count
                 final int currentServerCount = this.serverCount.incrementAndGet();
-                log.info(String.valueOf(ByteBuffer.allocate(4).putInt(currentServerCount).array().length));
-                requests.add(prepareToSendData(tagID, ByteBuffer.allocate(4).putInt(currentServerCount).array(), endpoint, scope));
+                requests.add(prepareToSendData(tagID, ByteBuffer.allocate(Integer.BYTES).putInt(currentServerCount).array(), endpoint, scope));
                 for (int i = 0; i < currentServerCount; i++) {
                     final byte[] addressBytes = SerializationUtils.serialize(serverMap.get(i));
                     final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(addressBytes.length);
@@ -337,14 +347,12 @@ public class DPwRServer {
                 }
                 sendData(requests, worker, CONNECTION_TIMEOUT_MS);
                 final byte[] addressSizeBytes = receiveData(tagID, Integer.BYTES, worker, CONNECTION_TIMEOUT_MS);
-                final ByteBuffer byteBuffer = ByteBuffer.wrap(addressSizeBytes);
-                final int addressSize = byteBuffer.getInt();
+                final int addressSize = ByteBuffer.wrap(addressSizeBytes).getInt();
                 final byte[] addressBytes = receiveData(tagID, addressSize, worker, CONNECTION_TIMEOUT_MS);
                 this.serverMap.put(currentServerCount - 1, SerializationUtils.deserialize(addressBytes));
             }
-
         } else {
-            sendSingleMessage(tagID, SerializationUtils.serialize("400"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+            sendSingleMessage(tagID, SerializationUtils.serialize("206"), endpoint, worker, CONNECTION_TIMEOUT_MS);
         }
         log.info(String.valueOf(this.serverID));
         for (final var entry : this.serverMap.entrySet()) {

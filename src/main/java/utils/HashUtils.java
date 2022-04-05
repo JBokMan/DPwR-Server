@@ -19,7 +19,7 @@ public class HashUtils {
         byte[] id = new byte[0];
         try {
             id = getMD5Hash(key);
-        } catch (NoSuchAlgorithmException e) {
+        } catch (final NoSuchAlgorithmException e) {
             log.error("The MD5 hash algorithm was not found.", e);
             //ToDo handle exception
         }
@@ -38,7 +38,7 @@ public class HashUtils {
             if (text.contains("timeout_test")) {
                 try {
                     TimeUnit.SECONDS.sleep(2);
-                } catch (InterruptedException e) {
+                } catch (final InterruptedException e) {
                     log.error(e.getMessage());
                 }
             }
@@ -51,12 +51,12 @@ public class HashUtils {
         return id;
     }
 
-    public static byte[] generateNextIdOfId(byte[] id) {
-        String idAsHexString = bytesToHex(id);
-        String tailEnd = idAsHexString.substring(idAsHexString.length() - 4);
+    public static byte[] generateNextIdOfId(final byte[] id) {
+        final String idAsHexString = bytesToHex(id);
+        final String tailEnd = idAsHexString.substring(idAsHexString.length() - 4);
         int tailEndInt = Integer.parseInt(tailEnd);
         tailEndInt += 1;
-        String newID = idAsHexString.substring(0, idAsHexString.length() - 4) + String.format("%04d", tailEndInt);
+        final String newID = idAsHexString.substring(0, idAsHexString.length() - 4) + String.format("%04d", tailEndInt);
         return HexFormat.of().parseHex(newID);
     }
 
