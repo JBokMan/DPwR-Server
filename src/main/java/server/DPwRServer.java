@@ -13,9 +13,7 @@ import org.apache.commons.lang3.SerializationUtils;
 import utils.WorkerPool;
 
 import java.net.ConnectException;
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -56,19 +54,19 @@ public class DPwRServer {
     private ListenerParameters listenerParameters;
     private WorkerPool workerPool;
 
-    public DPwRServer(final String plasmaFilePath, final String listenAddress, final Integer listenPort) throws UnknownHostException {
+    public DPwRServer(final String plasmaFilePath, final String listenAddress, final Integer listenPort) {
         this.listenAddress = new InetSocketAddress(listenAddress, listenPort);
         this.plasmaFilePath = plasmaFilePath;
         connectPlasma();
         this.serverID = 0;
-        serverMap.put(0, new InetSocketAddress(InetAddress.getLocalHost().getHostAddress(), listenPort));
+        serverMap.put(0, this.listenAddress);
     }
 
-    public DPwRServer(final String plasmaFilePath, final String listenAddress, final Integer listenPort, final String mainServerHostAddress, final Integer mainServerPort) throws ControlException, TimeoutException, UnknownHostException, ConnectException {
+    public DPwRServer(final String plasmaFilePath, final String listenAddress, final Integer listenPort, final String mainServerHostAddress, final Integer mainServerPort) throws ControlException, TimeoutException, ConnectException {
         this.listenAddress = new InetSocketAddress(listenAddress, listenPort);
         this.plasmaFilePath = plasmaFilePath;
         connectPlasma();
-        registerAtMain(new InetSocketAddress(mainServerHostAddress, mainServerPort), listenPort);
+        registerAtMain(new InetSocketAddress(mainServerHostAddress, mainServerPort));
     }
 
     private void connectPlasma() {
@@ -80,7 +78,7 @@ public class DPwRServer {
         }
     }
 
-    private void registerAtMain(final InetSocketAddress mainServerAddress, final int listenPort) throws ControlException, TimeoutException, UnknownHostException, ConnectException {
+    private void registerAtMain(final InetSocketAddress mainServerAddress) throws ControlException, TimeoutException, ConnectException {
         log.info("Register at main: {}", mainServerAddress);
         try (final ResourcePool resourcePool = new ResourcePool(); final ResourceScope scope = ResourceScope.newConfinedScope()) {
             final ContextParameters contextParameters = new ContextParameters(scope).setFeatures(ContextParameters.Feature.TAG);
@@ -113,7 +111,7 @@ public class DPwRServer {
                     final InetSocketAddress inetSocketAddress = deserialize(serverAddressBytes);
                     serverMap.put(i, inetSocketAddress);
                 }
-                serverMap.put(this.serverID, new InetSocketAddress(InetAddress.getLocalHost().getHostAddress(), listenPort));
+                serverMap.put(this.serverID, this.listenAddress);
 
                 final byte[] addressBytes = SerializationUtils.serialize(serverMap.get(this.serverID));
                 final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(addressBytes.length);
@@ -126,8 +124,7 @@ public class DPwRServer {
                         continue;
                     }
                     final InetSocketAddress address = entry.getValue();
-                    final InetSocketAddress parsedAddress = new InetSocketAddress("localhost", address.getPort());
-                    registerAtSecondary(parsedAddress, worker);
+                    registerAtSecondary(address, worker);
                 }
             } else {
                 throw new ConnectException("Main server could not be reached");
