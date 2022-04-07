@@ -96,7 +96,7 @@ public class DPwRServer {
                     continue;
                 }
                 final InetSocketAddress address = entry.getValue();
-                registerAtSecondary(address, worker, resourcePool, scope);
+                registerAtSecondary(address, worker, scope);
             }
         } catch (final CloseException e) {
             log.error(e.getMessage());
@@ -116,6 +116,12 @@ public class DPwRServer {
 
         final int tagID = receiveTagID(worker, CONNECTION_TIMEOUT_MS);
         sendSingleMessage(tagID, SerializationUtils.serialize("REG"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+
+        final byte[] addressBytes = SerializationUtils.serialize(this.listenAddress);
+        final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(addressBytes.length);
+        sendSingleMessage(tagID, byteBuffer.array(), endpoint, worker, CONNECTION_TIMEOUT_MS);
+        sendSingleMessage(tagID, addressBytes, endpoint, worker, CONNECTION_TIMEOUT_MS);
+
         final String statusCode = SerializationUtils.deserialize(receiveData(tagID, 10, worker, CONNECTION_TIMEOUT_MS));
         log.info("Received status code: \"{}\"", statusCode);
 
@@ -133,14 +139,10 @@ public class DPwRServer {
                 serverMap.put(i, inetSocketAddress);
             }
             serverMap.put(this.serverID, this.listenAddress);
-
-            final byte[] addressBytes = SerializationUtils.serialize(serverMap.get(this.serverID));
-            final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(addressBytes.length);
-            sendSingleMessage(tagID, byteBuffer.array(), endpoint, worker, CONNECTION_TIMEOUT_MS);
-            sendSingleMessage(tagID, addressBytes, endpoint, worker, CONNECTION_TIMEOUT_MS);
-
         } else if ("206".equals(statusCode)) {
             throw new ConnectException("Given address was of a secondary server and not of the main server");
+        } else if ("400".equals(statusCode)) {
+            throw new ConnectException("This server was already registered");
         } else {
             throw new ConnectException("Main server could not be reached");
         }
@@ -148,29 +150,34 @@ public class DPwRServer {
         endpoint.close();
     }
 
-    private void registerAtSecondary(final InetSocketAddress address, final Worker worker, final ResourcePool resourcePool, final ResourceScope scope) throws TimeoutException, ConnectException, ControlException {
+    private void registerAtSecondary(final InetSocketAddress address, final Worker worker, final ResourceScope scope) throws TimeoutException, ConnectException, ControlException {
         log.info("Register at secondary: {}", address);
 
         final EndpointParameters endpointParams = new EndpointParameters(scope).setRemoteAddress(address).setPeerErrorHandlingMode();
         final Endpoint endpoint = worker.createEndpoint(endpointParams);
-        resourcePool.push(endpoint);
 
         final int tagID = receiveTagID(worker, CONNECTION_TIMEOUT_MS);
         sendSingleMessage(tagID, SerializationUtils.serialize("REG"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+
+        final byte[] addressBytes = SerializationUtils.serialize(this.listenAddress);
+        final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(addressBytes.length);
+        sendSingleMessage(tagID, byteBuffer.array(), endpoint, worker, CONNECTION_TIMEOUT_MS);
+        sendSingleMessage(tagID, addressBytes, endpoint, worker, CONNECTION_TIMEOUT_MS);
+
         final String statusCode = SerializationUtils.deserialize(receiveData(tagID, 10, worker, CONNECTION_TIMEOUT_MS));
         log.info("Received status code: \"{}\"", statusCode);
 
         if ("206".equals(statusCode)) {
-            final byte[] addressBytes = SerializationUtils.serialize(serverMap.get(this.serverID));
-            final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(addressBytes.length);
             sendSingleMessage(tagID, ByteBuffer.allocate(Integer.BYTES).putInt(this.serverID).array(), endpoint, worker, CONNECTION_TIMEOUT_MS);
-            sendSingleMessage(tagID, byteBuffer.array(), endpoint, worker, CONNECTION_TIMEOUT_MS);
-            sendSingleMessage(tagID, addressBytes, endpoint, worker, CONNECTION_TIMEOUT_MS);
         } else if ("200".equals(statusCode)) {
             throw new ConnectException("Given address was of the main server and not of the secondary server");
+        } else if ("400".equals(statusCode)) {
+            throw new ConnectException("This server was already registered");
         } else {
             throw new ConnectException("Secondary server could not be reached");
         }
+
+        endpoint.close();
     }
 
     public void listen() {
@@ -373,14 +380,26 @@ public class DPwRServer {
     }
 
     private void regOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException {
-        //TODO exception handling, check if address already exists
+        // Receive the server address from the new server
+        final byte[] newAddressSizeBytes = receiveData(tagID, Integer.BYTES, worker, CONNECTION_TIMEOUT_MS);
+        final int newAddressSize = ByteBuffer.wrap(newAddressSizeBytes).getInt();
+        final byte[] newAddressBytes = receiveData(tagID, newAddressSize, worker, CONNECTION_TIMEOUT_MS);
+        final InetSocketAddress newServerAddress = SerializationUtils.deserialize(newAddressBytes);
+
+        if (this.serverMap.containsValue(newServerAddress)) {
+            sendSingleMessage(tagID, serialize("400"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+            return;
+        }
+
         if (this.serverID == 0) {
+            log.info("This is the main server");
             try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
                 final ArrayList<Long> requests = new ArrayList<>();
                 requests.add(prepareToSendData(tagID, SerializationUtils.serialize("200"), endpoint, scope));
                 // Send the current server count
                 final int currentServerCount = this.serverCount.incrementAndGet();
                 requests.add(prepareToSendData(tagID, ByteBuffer.allocate(Integer.BYTES).putInt(currentServerCount).array(), endpoint, scope));
+                // For each server address in the server map first send its size, then the address
                 for (int i = 0; i < currentServerCount; i++) {
                     final byte[] addressBytes = SerializationUtils.serialize(serverMap.get(i));
                     final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(addressBytes.length);
@@ -388,19 +407,15 @@ public class DPwRServer {
                     requests.add(prepareToSendData(tagID, addressBytes, endpoint, scope));
                 }
                 sendData(requests, worker, CONNECTION_TIMEOUT_MS);
-                final byte[] addressSizeBytes = receiveData(tagID, Integer.BYTES, worker, CONNECTION_TIMEOUT_MS);
-                final int addressSize = ByteBuffer.wrap(addressSizeBytes).getInt();
-                final byte[] addressBytes = receiveData(tagID, addressSize, worker, CONNECTION_TIMEOUT_MS);
-                this.serverMap.put(currentServerCount - 1, SerializationUtils.deserialize(addressBytes));
+                this.serverMap.put(currentServerCount - 1, newServerAddress);
             }
         } else {
+            log.info("This is a secondary server");
             sendSingleMessage(tagID, SerializationUtils.serialize("206"), endpoint, worker, CONNECTION_TIMEOUT_MS);
             final byte[] serverIDBytes = receiveData(tagID, Integer.BYTES, worker, CONNECTION_TIMEOUT_MS);
             final int serverID = ByteBuffer.wrap(serverIDBytes).getInt();
-            final byte[] addressSizeBytes = receiveData(tagID, Integer.BYTES, worker, CONNECTION_TIMEOUT_MS);
-            final int addressSize = ByteBuffer.wrap(addressSizeBytes).getInt();
-            final byte[] addressBytes = receiveData(tagID, addressSize, worker, CONNECTION_TIMEOUT_MS);
-            this.serverMap.put(serverID, SerializationUtils.deserialize(addressBytes));
+
+            this.serverMap.put(serverID, newServerAddress);
             this.serverCount.incrementAndGet();
         }
         log.info(String.valueOf(this.serverID));
