@@ -122,8 +122,7 @@ public class DPwRServer {
         sendSingleMessage(tagID, byteBuffer.array(), endpoint, worker, CONNECTION_TIMEOUT_MS);
         sendSingleMessage(tagID, addressBytes, endpoint, worker, CONNECTION_TIMEOUT_MS);
 
-        final String statusCode = SerializationUtils.deserialize(receiveData(tagID, 10, worker, CONNECTION_TIMEOUT_MS));
-        log.info("Received status code: \"{}\"", statusCode);
+        final String statusCode = receiveStatusCode(tagID, worker, CONNECTION_TIMEOUT_MS);
 
         if ("200".equals(statusCode)) {
             final byte[] serverCountBytes = receiveData(tagID, Integer.BYTES, worker, CONNECTION_TIMEOUT_MS);
@@ -164,8 +163,7 @@ public class DPwRServer {
         sendSingleMessage(tagID, byteBuffer.array(), endpoint, worker, CONNECTION_TIMEOUT_MS);
         sendSingleMessage(tagID, addressBytes, endpoint, worker, CONNECTION_TIMEOUT_MS);
 
-        final String statusCode = SerializationUtils.deserialize(receiveData(tagID, 10, worker, CONNECTION_TIMEOUT_MS));
-        log.info("Received status code: \"{}\"", statusCode);
+        final String statusCode = receiveStatusCode(tagID, worker, CONNECTION_TIMEOUT_MS);
 
         if ("206".equals(statusCode)) {
             sendSingleMessage(tagID, ByteBuffer.allocate(Integer.BYTES).putInt(this.serverID).array(), endpoint, worker, CONNECTION_TIMEOUT_MS);
@@ -289,7 +287,7 @@ public class DPwRServer {
     private void putOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException, ControlException, CloseException {
         final String keyToPut = receiveKey(tagID, worker, CONNECTION_TIMEOUT_MS);
         byte[] id = generateID(keyToPut);
-        final int entrySize = receiveEntrySize(tagID, worker, CONNECTION_TIMEOUT_MS);
+        final int entrySize = receiveInteger(tagID, worker, CONNECTION_TIMEOUT_MS);
 
         if (plasmaClient.contains(id)) {
             log.warn("Plasma does contain the id");
@@ -330,8 +328,7 @@ public class DPwRServer {
                 sendObjectAddressAndStatusCode(tagID, objectBuffer, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
 
                 // Wait for client to signal successful transmission
-                final String statusCode = deserialize(receiveData(tagID, 10, worker, CONNECTION_TIMEOUT_MS));
-                log.info("Received status code \"{}\"", statusCode);
+                receiveStatusCode(tagID, worker, CONNECTION_TIMEOUT_MS);
             } else {
                 log.warn("Entry with id: {} has not key: {}", id, keyToGet);
                 final ByteBuffer bufferOfCorrectEntry = findEntryWithKey(plasmaClient, keyToGet, objectBuffer, PLASMA_TIMEOUT_MS);
@@ -342,8 +339,7 @@ public class DPwRServer {
                     sendObjectAddressAndStatusCode(tagID, bufferOfCorrectEntry, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
 
                     // Wait for client to signal successful transmission
-                    final String statusCode = deserialize(receiveData(tagID, 10, worker, CONNECTION_TIMEOUT_MS));
-                    log.info("Received status code \"{}\"", statusCode);
+                    receiveStatusCode(tagID, worker, CONNECTION_TIMEOUT_MS);
                 } else {
                     log.warn("Not found entry with key: {}", keyToGet);
                     sendSingleMessage(tagID, serialize("404"), endpoint, worker, CONNECTION_TIMEOUT_MS);

@@ -9,7 +9,7 @@ import jdk.incubator.foreign.ValueLayout;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.commons.lang3.ObjectUtils;
-import org.apache.commons.lang3.SerializationUtils;
+import org.apache.commons.lang3.SerializationException;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -72,16 +72,15 @@ public class CommunicationUtils {
         }
     }
 
-    public static void awaitPutCompletionSignal(final int tagID, final PlasmaClient plasmaClient, final byte[] id, final Worker worker, final byte[] idToUpdate, final int timeoutMs, final int plasmaTimeoutMs) throws TimeoutException {
+    public static void awaitPutCompletionSignal(final int tagID, final PlasmaClient plasmaClient, final byte[] id, final Worker worker, final byte[] idToUpdate, final int timeoutMs, final int plasmaTimeoutMs) throws TimeoutException, SerializationException {
         final String statusCode;
         try {
-            statusCode = SerializationUtils.deserialize(receiveData(tagID, 10, worker, timeoutMs));
-        } catch (final TimeoutException e) {
+            statusCode = receiveStatusCode(tagID, worker, timeoutMs);
+        } catch (final TimeoutException | SerializationException e) {
             plasmaClient.seal(id);
             deleteById(plasmaClient, id);
             throw e;
         }
-        log.info("Received status code: \"{}\"", statusCode);
         if ("200".equals(statusCode)) {
             plasmaClient.seal(id);
             if (ObjectUtils.isNotEmpty(idToUpdate)) {
@@ -90,12 +89,19 @@ public class CommunicationUtils {
         }
     }
 
-    public static int receiveEntrySize(final int tagID, final Worker worker, final int timeoutMs) throws TimeoutException {
-        final byte[] entrySizeBytes = receiveData(tagID, Integer.BYTES, worker, timeoutMs);
-        final ByteBuffer byteBuffer = ByteBuffer.wrap(entrySizeBytes);
-        final int entrySize = byteBuffer.getInt();
-        log.info("Received \"{}\"", entrySize);
-        return entrySize;
+    public static int receiveInteger(final int tagID, final Worker worker, final int timeoutMs) throws TimeoutException {
+        final byte[] integerBytes = receiveData(tagID, Integer.BYTES, worker, timeoutMs);
+        final ByteBuffer byteBuffer = ByteBuffer.wrap(integerBytes);
+        final int number = byteBuffer.getInt();
+        log.info("Received \"{}\"", number);
+        return number;
+    }
+
+    public static String receiveStatusCode(final int tagID, final Worker worker, final int timeoutMs) throws TimeoutException, SerializationException {
+        final byte[] statusCodeBytes = receiveData(tagID, 10, worker, timeoutMs);
+        final String statusCode = deserialize(statusCodeBytes);
+        log.info("Received status code: \"{}\"", statusCode);
+        return statusCode;
     }
 
     public static void sendData(final List<Long> requests, final Worker worker, final int timeoutMs) throws TimeoutException {
@@ -177,19 +183,12 @@ public class CommunicationUtils {
     }
 
     public static int receiveTagID(final Worker worker, final int timeoutMs) throws TimeoutException {
-        final byte[] tagIDBytes = receiveData(0, Integer.BYTES, worker, timeoutMs);
-        final ByteBuffer byteBuffer = ByteBuffer.wrap(tagIDBytes);
-        final int tagID = byteBuffer.getInt();
-        log.info("Received \"{}\"", tagID);
-        return tagID;
+        return receiveInteger(0, worker, timeoutMs);
     }
 
     public static String receiveKey(final int tagID, final Worker worker, final int timeoutMs) throws TimeoutException {
         // Get key size in bytes
-        final byte[] keySizeBytes = receiveData(tagID, Integer.BYTES, worker, timeoutMs);
-        final ByteBuffer byteBuffer = ByteBuffer.wrap(keySizeBytes);
-        final int keySize = byteBuffer.getInt();
-        log.info("Received \"{}\"", keySize);
+        final int keySize = receiveInteger(tagID, worker, timeoutMs);
 
         // Get key as bytes
         final byte[] keyBytes = receiveData(tagID, keySize, worker, timeoutMs);
