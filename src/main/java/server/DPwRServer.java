@@ -61,7 +61,7 @@ public class DPwRServer {
         this.plasmaFilePath = plasmaFilePath;
         connectPlasma();
         this.serverID = 0;
-        serverMap.put(0, new InetSocketAddress(InetAddress.getLocalHost(), listenPort));
+        serverMap.put(0, new InetSocketAddress(InetAddress.getLocalHost().getHostAddress(), listenPort));
     }
 
     public DPwRServer(final String plasmaFilePath, final String listenAddress, final Integer listenPort, final String mainServerHostAddress, final Integer mainServerPort) throws ControlException, TimeoutException, UnknownHostException, ConnectException {
@@ -81,6 +81,7 @@ public class DPwRServer {
     }
 
     private void registerAtMain(final InetSocketAddress mainServerAddress, final int listenPort) throws ControlException, TimeoutException, UnknownHostException, ConnectException {
+        log.info("Register at main: {}", mainServerAddress);
         try (final ResourcePool resourcePool = new ResourcePool(); final ResourceScope scope = ResourceScope.newConfinedScope()) {
             final ContextParameters contextParameters = new ContextParameters(scope).setFeatures(ContextParameters.Feature.TAG);
             final Context context = Context.initialize(contextParameters, null);
@@ -112,12 +113,22 @@ public class DPwRServer {
                     final InetSocketAddress inetSocketAddress = deserialize(serverAddressBytes);
                     serverMap.put(i, inetSocketAddress);
                 }
-                serverMap.put(this.serverID, new InetSocketAddress(InetAddress.getLocalHost(), listenPort));
+                serverMap.put(this.serverID, new InetSocketAddress(InetAddress.getLocalHost().getHostAddress(), listenPort));
 
                 final byte[] addressBytes = SerializationUtils.serialize(serverMap.get(this.serverID));
                 final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(addressBytes.length);
                 sendSingleMessage(tagID, byteBuffer.array(), endpoint, worker, CONNECTION_TIMEOUT_MS);
                 sendSingleMessage(tagID, addressBytes, endpoint, worker, CONNECTION_TIMEOUT_MS);
+
+                for (final Map.Entry<Integer, InetSocketAddress> entry : this.serverMap.entrySet()) {
+                    final int serverID = entry.getKey();
+                    if (serverID == 0 || serverID == this.serverID) {
+                        continue;
+                    }
+                    final InetSocketAddress address = entry.getValue();
+                    final InetSocketAddress parsedAddress = new InetSocketAddress("localhost", address.getPort());
+                    registerAtSecondary(parsedAddress, worker);
+                }
             } else {
                 throw new ConnectException("Main server could not be reached");
             }
@@ -128,6 +139,30 @@ public class DPwRServer {
 
         } catch (final CloseException e) {
             log.error(e.getMessage());
+        }
+    }
+
+    private void registerAtSecondary(final InetSocketAddress address, final Worker worker) throws TimeoutException, ConnectException, ControlException {
+        final EndpointParameters endpointParams = new EndpointParameters().setRemoteAddress(address).setPeerErrorHandlingMode();
+        final Endpoint endpoint = worker.createEndpoint(endpointParams);
+        log.info("Register at secondary: {}", address);
+        final int tagID = receiveTagID(worker, CONNECTION_TIMEOUT_MS);
+        sendSingleMessage(tagID, SerializationUtils.serialize("REG"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+        final String statusCode = SerializationUtils.deserialize(receiveData(tagID, 10, worker, CONNECTION_TIMEOUT_MS));
+        log.info("Received status code: \"{}\"", statusCode);
+
+        if ("206".equals(statusCode)) {
+            final byte[] addressBytes = SerializationUtils.serialize(serverMap.get(this.serverID));
+            final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(addressBytes.length);
+            sendSingleMessage(tagID, ByteBuffer.allocate(Integer.BYTES).putInt(this.serverID).array(), endpoint, worker, CONNECTION_TIMEOUT_MS);
+            sendSingleMessage(tagID, byteBuffer.array(), endpoint, worker, CONNECTION_TIMEOUT_MS);
+            sendSingleMessage(tagID, addressBytes, endpoint, worker, CONNECTION_TIMEOUT_MS);
+        } else {
+            throw new ConnectException("Secondary server could not be reached");
+        }
+        log.info(String.valueOf(this.serverID));
+        for (final var entry : this.serverMap.entrySet()) {
+            log.info(entry.getKey() + "/" + entry.getValue());
         }
     }
 
@@ -331,7 +366,7 @@ public class DPwRServer {
     }
 
     private void regOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException {
-        //TODO exception handling
+        //TODO exception handling, check if address already exists
         if (this.serverID == 0) {
             try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
                 final ArrayList<Long> requests = new ArrayList<>();
@@ -353,6 +388,13 @@ public class DPwRServer {
             }
         } else {
             sendSingleMessage(tagID, SerializationUtils.serialize("206"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+            final byte[] serverIDBytes = receiveData(tagID, Integer.BYTES, worker, CONNECTION_TIMEOUT_MS);
+            final int serverID = ByteBuffer.wrap(serverIDBytes).getInt();
+            final byte[] addressSizeBytes = receiveData(tagID, Integer.BYTES, worker, CONNECTION_TIMEOUT_MS);
+            final int addressSize = ByteBuffer.wrap(addressSizeBytes).getInt();
+            final byte[] addressBytes = receiveData(tagID, addressSize, worker, CONNECTION_TIMEOUT_MS);
+            this.serverMap.put(serverID, SerializationUtils.deserialize(addressBytes));
+            this.serverCount.incrementAndGet();
         }
         log.info(String.valueOf(this.serverID));
         for (final var entry : this.serverMap.entrySet()) {
