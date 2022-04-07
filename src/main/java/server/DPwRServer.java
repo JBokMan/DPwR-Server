@@ -131,8 +131,7 @@ public class DPwRServer {
             this.serverID = serverCount - 1;
 
             for (int i = 0; i < serverCount; i++) {
-                final byte[] addressSizeBytes = receiveData(tagID, Integer.BYTES, worker, CONNECTION_TIMEOUT_MS);
-                final int addressSize = ByteBuffer.wrap(addressSizeBytes).getInt();
+                final int addressSize = receiveInteger(tagID, worker, CONNECTION_TIMEOUT_MS);
                 final byte[] serverAddressBytes = receiveData(tagID, addressSize, worker, CONNECTION_TIMEOUT_MS);
                 final InetSocketAddress inetSocketAddress = deserialize(serverAddressBytes);
                 serverMap.put(i, inetSocketAddress);
@@ -377,8 +376,7 @@ public class DPwRServer {
 
     private void regOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException {
         // Receive the server address from the new server
-        final byte[] newAddressSizeBytes = receiveData(tagID, Integer.BYTES, worker, CONNECTION_TIMEOUT_MS);
-        final int newAddressSize = ByteBuffer.wrap(newAddressSizeBytes).getInt();
+        final int newAddressSize = receiveInteger(tagID, worker, CONNECTION_TIMEOUT_MS);
         final byte[] newAddressBytes = receiveData(tagID, newAddressSize, worker, CONNECTION_TIMEOUT_MS);
         final InetSocketAddress newServerAddress = SerializationUtils.deserialize(newAddressBytes);
 
