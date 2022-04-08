@@ -28,7 +28,7 @@ public class HashUtils {
         return fullID;
     }
 
-    public static byte[] getMD5Hash(final String text) throws NoSuchAlgorithmException {
+    private static byte[] getMD5Hash(final String text) throws NoSuchAlgorithmException {
         final MessageDigest messageDigest = MessageDigest.getInstance("MD5");
         byte[] id = messageDigest.digest(text.getBytes(StandardCharsets.UTF_8));
         if (TEST_MODE) {
@@ -60,7 +60,7 @@ public class HashUtils {
         return HexFormat.of().parseHex(newID);
     }
 
-    public static String bytesToHex(final byte[] bytes) {
+    private static String bytesToHex(final byte[] bytes) {
         final StringBuilder sb = new StringBuilder();
         for (final byte b : bytes) {
             sb.append(String.format("%02x", b));
