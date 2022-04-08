@@ -97,10 +97,37 @@ public class CommunicationUtils {
         }
     }
 
-    public static void sendSingleMessage(final int tagID, final byte[] data, final Endpoint endpoint, final Worker worker, final int timeoutMs) throws TimeoutException {
+    private static void sendSingleByteArray(final int tagID, final byte[] data, final Endpoint endpoint, final Worker worker, final int timeoutMs) throws TimeoutException {
         try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
             final Long request = prepareToSendData(tagID, data, endpoint, scope);
             sendData(List.of(request), worker, timeoutMs);
+        }
+    }
+
+    public static void sendSingleInteger(final int tagID, final int integer, final Endpoint endpoint, final Worker worker, final int timeoutMs) throws TimeoutException {
+        final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(integer);
+        sendSingleByteArray(tagID, byteBuffer.array(), endpoint, worker, timeoutMs);
+    }
+
+    public static void sendSingleString(final int tagID, final String string, final Endpoint endpoint, final Worker worker, final int timeoutMs) throws TimeoutException {
+        sendSingleByteArray(tagID, serialize(string), endpoint, worker, timeoutMs);
+    }
+
+    public static void sendStatusCode(final int tagID, final String statusCode, final Endpoint endpoint, final Worker worker, final int timeoutMs) throws TimeoutException {
+        sendSingleString(tagID, statusCode, endpoint, worker, timeoutMs);
+    }
+
+    public static void sendOperationName(final int tagID, final String operationName, final Endpoint endpoint, final Worker worker, final int timeoutMs) throws TimeoutException {
+        sendSingleString(tagID, operationName, endpoint, worker, timeoutMs);
+    }
+
+    public static void sendAddress(final int tagID, final InetSocketAddress address, final Endpoint endpoint, final Worker worker, final int timeoutMs) throws TimeoutException {
+        try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
+            final ArrayList<Long> requests = new ArrayList<>();
+            final byte[] addressBytes = serialize(address);
+            requests.add(prepareToSendInteger(tagID, addressBytes.length, endpoint, scope));
+            requests.add(prepareToSendData(tagID, addressBytes, endpoint, scope));
+            sendData(requests, worker, timeoutMs);
         }
     }
 
@@ -119,7 +146,7 @@ public class CommunicationUtils {
             objectAddress = getMemoryDescriptorOfByteBuffer(objectBuffer, context);
         } catch (final ControlException | CloseException e) {
             log.error("An exception occurred getting the objects memory address");
-            sendSingleMessage(tagID, serialize("500"), endpoint, worker, timeoutMs);
+            sendStatusCode(tagID, "500", endpoint, worker, timeoutMs);
             throw e;
         }
 
@@ -167,6 +194,12 @@ public class CommunicationUtils {
         return receiveInteger(0, worker, timeoutMs);
     }
 
+    public static InetSocketAddress receiveAddress(final int tagID, final Worker worker, final int timeoutMs) throws TimeoutException {
+        final int addressSize = receiveInteger(tagID, worker, timeoutMs);
+        final byte[] serverAddressBytes = receiveData(tagID, addressSize, worker, timeoutMs);
+        return deserialize(serverAddressBytes);
+    }
+
     public static String receiveKey(final int tagID, final Worker worker, final int timeoutMs) throws TimeoutException {
         // Get key size in bytes
         final int keySize = receiveInteger(tagID, worker, timeoutMs);
@@ -184,6 +217,13 @@ public class CommunicationUtils {
         final String statusCode = deserialize(statusCodeBytes);
         log.info("Received status code: \"{}\"", statusCode);
         return statusCode;
+    }
+
+    public static String receiveOperationName(final int tagID, final Worker worker, final int timeoutMs) throws TimeoutException, SerializationException {
+        final byte[] operationNameBytes = receiveData(tagID, 10, worker, timeoutMs);
+        final String operationName = deserialize(operationNameBytes);
+        log.info("Received operation name: \"{}\"", operationName);
+        return operationName;
     }
 
     public static void awaitPutCompletionSignal(final int tagID, final PlasmaClient plasmaClient, final byte[] id, final Worker worker, final byte[] idToUpdate, final int timeoutMs, final int plasmaTimeoutMs) throws TimeoutException, SerializationException {

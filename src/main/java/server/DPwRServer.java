@@ -9,7 +9,6 @@ import lombok.extern.slf4j.Slf4j;
 import model.PlasmaEntry;
 import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.commons.lang3.ArrayUtils;
-import org.apache.commons.lang3.SerializationUtils;
 import utils.WorkerPool;
 
 import java.net.ConnectException;
@@ -22,7 +21,6 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.apache.commons.lang3.SerializationUtils.deserialize;
-import static org.apache.commons.lang3.SerializationUtils.serialize;
 import static utils.CommunicationUtils.*;
 import static utils.HashUtils.generateID;
 import static utils.HashUtils.generateNextIdOfId;
@@ -30,8 +28,6 @@ import static utils.PlasmaUtils.*;
 
 @Slf4j
 public class DPwRServer {
-
-    private static final int OPERATION_MESSAGE_SIZE = 10;
 
     int serverID = -1;
     private final AtomicInteger serverCount = new AtomicInteger(1);
@@ -115,12 +111,8 @@ public class DPwRServer {
         final Endpoint endpoint = worker.createEndpoint(endpointParams);
 
         final int tagID = receiveTagID(worker, CONNECTION_TIMEOUT_MS);
-        sendSingleMessage(tagID, SerializationUtils.serialize("REG"), endpoint, worker, CONNECTION_TIMEOUT_MS);
-
-        final byte[] addressBytes = SerializationUtils.serialize(this.listenAddress);
-        final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(addressBytes.length);
-        sendSingleMessage(tagID, byteBuffer.array(), endpoint, worker, CONNECTION_TIMEOUT_MS);
-        sendSingleMessage(tagID, addressBytes, endpoint, worker, CONNECTION_TIMEOUT_MS);
+        sendOperationName(tagID, "REG", endpoint, worker, CONNECTION_TIMEOUT_MS);
+        sendAddress(tagID, this.listenAddress, endpoint, worker, CONNECTION_TIMEOUT_MS);
 
         final String statusCode = receiveStatusCode(tagID, worker, CONNECTION_TIMEOUT_MS);
 
@@ -130,10 +122,8 @@ public class DPwRServer {
             this.serverID = serverCount - 1;
 
             for (int i = 0; i < serverCount; i++) {
-                final int addressSize = receiveInteger(tagID, worker, CONNECTION_TIMEOUT_MS);
-                final byte[] serverAddressBytes = receiveData(tagID, addressSize, worker, CONNECTION_TIMEOUT_MS);
-                final InetSocketAddress inetSocketAddress = deserialize(serverAddressBytes);
-                serverMap.put(i, inetSocketAddress);
+                final InetSocketAddress serverAddress = receiveAddress(tagID, worker, CONNECTION_TIMEOUT_MS);
+                serverMap.put(i, serverAddress);
             }
             serverMap.put(this.serverID, this.listenAddress);
         } else if ("206".equals(statusCode)) {
@@ -154,17 +144,13 @@ public class DPwRServer {
         final Endpoint endpoint = worker.createEndpoint(endpointParams);
 
         final int tagID = receiveTagID(worker, CONNECTION_TIMEOUT_MS);
-        sendSingleMessage(tagID, SerializationUtils.serialize("REG"), endpoint, worker, CONNECTION_TIMEOUT_MS);
-
-        final byte[] addressBytes = SerializationUtils.serialize(this.listenAddress);
-        final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(addressBytes.length);
-        sendSingleMessage(tagID, byteBuffer.array(), endpoint, worker, CONNECTION_TIMEOUT_MS);
-        sendSingleMessage(tagID, addressBytes, endpoint, worker, CONNECTION_TIMEOUT_MS);
+        sendOperationName(tagID, "REG", endpoint, worker, CONNECTION_TIMEOUT_MS);
+        sendAddress(tagID, this.listenAddress, endpoint, worker, CONNECTION_TIMEOUT_MS);
 
         final String statusCode = receiveStatusCode(tagID, worker, CONNECTION_TIMEOUT_MS);
 
         if ("206".equals(statusCode)) {
-            sendSingleMessage(tagID, ByteBuffer.allocate(Integer.BYTES).putInt(this.serverID).array(), endpoint, worker, CONNECTION_TIMEOUT_MS);
+            sendSingleInteger(tagID, this.serverID, endpoint, worker, CONNECTION_TIMEOUT_MS);
         } else if ("200".equals(statusCode)) {
             throw new ConnectException("Given address was of the main server and not of the secondary server");
         } else if ("400".equals(statusCode)) {
@@ -250,14 +236,12 @@ public class DPwRServer {
 
     private void handleRequest(final ConnectionRequest request, final Worker currentWorker) throws ControlException {
         try (final ResourceScope scope = ResourceScope.newConfinedScope(); final Endpoint endpoint = currentWorker.createEndpoint(new EndpointParameters(scope).setConnectionRequest(request).setPeerErrorHandlingMode())) {
-            // Send tagID to client
+            // Send tagID to client and increment
             final int tagID = this.runningTagID.getValue();
             this.runningTagID.increment();
-            final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(tagID);
-            sendSingleMessage(0, byteBuffer.array(), endpoint, currentWorker, CONNECTION_TIMEOUT_MS);
+            sendSingleInteger(0, tagID, endpoint, currentWorker, CONNECTION_TIMEOUT_MS);
 
-            final String operationName = deserialize(receiveData(tagID, OPERATION_MESSAGE_SIZE, currentWorker, CONNECTION_TIMEOUT_MS));
-            log.info("Received \"{}\"", operationName);
+            final String operationName = receiveOperationName(tagID, currentWorker, CONNECTION_TIMEOUT_MS);
 
             switch (operationName) {
                 case "PUT" -> {
@@ -294,7 +278,7 @@ public class DPwRServer {
 
             if (ArrayUtils.isEmpty(objectIdWithFreeNextID)) {
                 log.warn("Object with key is already in plasma");
-                sendSingleMessage(tagID, serialize("409"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+                sendStatusCode(tagID, "409", endpoint, worker, CONNECTION_TIMEOUT_MS);
                 log.info("Put operation completed \n");
                 return;
             }
@@ -340,12 +324,12 @@ public class DPwRServer {
                     receiveStatusCode(tagID, worker, CONNECTION_TIMEOUT_MS);
                 } else {
                     log.warn("Not found entry with key: {}", keyToGet);
-                    sendSingleMessage(tagID, serialize("404"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+                    sendStatusCode(tagID, "404", endpoint, worker, CONNECTION_TIMEOUT_MS);
                 }
             }
         } else {
             log.warn("Not found entry with key: {}", keyToGet);
-            sendSingleMessage(tagID, serialize("404"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+            sendStatusCode(tagID, "404", endpoint, worker, CONNECTION_TIMEOUT_MS);
         }
         log.info("Get operation completed \n");
     }
@@ -365,22 +349,19 @@ public class DPwRServer {
 
         if ("204".equals(statusCode)) {
             log.info("Object with key \"{}\" found and deleted", keyToDelete);
-            sendSingleMessage(tagID, serialize("204"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+            sendStatusCode(tagID, "204", endpoint, worker, CONNECTION_TIMEOUT_MS);
         } else {
             log.warn("Object with key \"{}\" was not found in plasma store", keyToDelete);
-            sendSingleMessage(tagID, serialize("404"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+            sendStatusCode(tagID, "404", endpoint, worker, CONNECTION_TIMEOUT_MS);
         }
         log.info("Del operation completed \n");
     }
 
     private void regOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException {
-        // Receive the server address from the new server
-        final int newAddressSize = receiveInteger(tagID, worker, CONNECTION_TIMEOUT_MS);
-        final byte[] newAddressBytes = receiveData(tagID, newAddressSize, worker, CONNECTION_TIMEOUT_MS);
-        final InetSocketAddress newServerAddress = SerializationUtils.deserialize(newAddressBytes);
+        final InetSocketAddress newServerAddress = receiveAddress(tagID, worker, CONNECTION_TIMEOUT_MS);
 
         if (this.serverMap.containsValue(newServerAddress)) {
-            sendSingleMessage(tagID, serialize("400"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+            sendStatusCode(tagID, "400", endpoint, worker, CONNECTION_TIMEOUT_MS);
             return;
         }
 
@@ -401,7 +382,7 @@ public class DPwRServer {
             }
         } else {
             log.info("This is a secondary server");
-            sendSingleMessage(tagID, SerializationUtils.serialize("206"), endpoint, worker, CONNECTION_TIMEOUT_MS);
+            sendStatusCode(tagID, "206", endpoint, worker, CONNECTION_TIMEOUT_MS);
             final byte[] serverIDBytes = receiveData(tagID, Integer.BYTES, worker, CONNECTION_TIMEOUT_MS);
             final int serverID = ByteBuffer.wrap(serverIDBytes).getInt();
 
