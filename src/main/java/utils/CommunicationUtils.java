@@ -44,6 +44,11 @@ public class CommunicationUtils {
         return prepareToSendData(tagID, serialize(string), endpoint, scope);
     }
 
+    public static Long prepareToSendInteger(final int tagID, final int integer, final Endpoint endpoint, final ResourceScope scope) {
+        final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(integer);
+        return prepareToSendData(tagID, byteBuffer.array(), endpoint, scope);
+    }
+
     public static ArrayList<Long> prepareToSendAddress(final int tagID, final InetSocketAddress address, final Endpoint endpoint, final ResourceScope scope) {
         final ArrayList<Long> requests = new ArrayList<>();
         final byte[] addressBytes = serialize(address);
@@ -52,9 +57,9 @@ public class CommunicationUtils {
         return requests;
     }
 
-    public static Long prepareToSendInteger(final int tagID, final int integer, final Endpoint endpoint, final ResourceScope scope) {
-        final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(integer);
-        return prepareToSendData(tagID, byteBuffer.array(), endpoint, scope);
+    private static Long prepareToSendRemoteKey(final int tagID, final MemoryDescriptor descriptor, final Endpoint endpoint) {
+        log.info("Prepare to send remote key");
+        return endpoint.sendTagged(descriptor, Tag.of(tagID));
     }
 
     public static void sendData(final List<Long> requests, final Worker worker, final int timeoutMs) throws TimeoutException {
@@ -104,11 +109,6 @@ public class CommunicationUtils {
         try (final MemoryRegion memoryRegion = context.mapMemory(source)) {
             return memoryRegion.descriptor();
         }
-    }
-
-    private static Long prepareToSendRemoteKey(final int tagID, final MemoryDescriptor descriptor, final Endpoint endpoint) {
-        log.info("Prepare to send remote key");
-        return endpoint.sendTagged(descriptor, Tag.of(tagID));
     }
 
     //todo rename
