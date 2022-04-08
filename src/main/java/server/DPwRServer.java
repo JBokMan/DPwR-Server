@@ -20,7 +20,6 @@ import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.apache.commons.lang3.SerializationUtils.deserialize;
 import static utils.CommunicationUtils.*;
 import static utils.HashUtils.generateID;
 import static utils.HashUtils.generateNextIdOfId;
@@ -273,7 +272,7 @@ public class DPwRServer {
 
         if (plasmaClient.contains(id)) {
             log.warn("Plasma does contain the id");
-            final PlasmaEntry plasmaEntry = deserialize(plasmaClient.get(id, PLASMA_TIMEOUT_MS, false));
+            final PlasmaEntry plasmaEntry = getPlasmaEntry(plasmaClient, id, PLASMA_TIMEOUT_MS);
             final byte[] objectIdWithFreeNextID = getObjectIdOfNextEntryWithEmptyNextID(plasmaClient, plasmaEntry, id, keyToPut, PLASMA_TIMEOUT_MS);
 
             if (ArrayUtils.isEmpty(objectIdWithFreeNextID)) {
@@ -342,7 +341,7 @@ public class DPwRServer {
 
         if (plasmaClient.contains(id)) {
             log.info("Entry with id {} exists", id);
-            final PlasmaEntry entry = deserialize(plasmaClient.get(id, PLASMA_TIMEOUT_MS, false));
+            final PlasmaEntry entry = getPlasmaEntry(plasmaClient, id, PLASMA_TIMEOUT_MS);
             log.info(entry.toString());
             statusCode = findAndDeleteEntryWithKey(plasmaClient, keyToDelete, entry, id, PLASMA_TIMEOUT_MS);
         }

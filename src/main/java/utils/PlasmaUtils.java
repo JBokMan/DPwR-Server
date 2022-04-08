@@ -116,4 +116,9 @@ public class PlasmaUtils {
         objectBuffer.position(0);
         return deserialize(data);
     }
+
+    public static PlasmaEntry getPlasmaEntry(final PlasmaClient client, final byte[] id, final int timeoutMs) {
+        final byte[] entry = client.get(id, timeoutMs, false);
+        return deserialize(entry);
+    }
 }
