@@ -125,8 +125,7 @@ public class DPwRServer {
         final String statusCode = receiveStatusCode(tagID, worker, CONNECTION_TIMEOUT_MS);
 
         if ("200".equals(statusCode)) {
-            final byte[] serverCountBytes = receiveData(tagID, Integer.BYTES, worker, CONNECTION_TIMEOUT_MS);
-            final int serverCount = ByteBuffer.wrap(serverCountBytes).getInt();
+            final int serverCount = receiveInteger(tagID, worker, CONNECTION_TIMEOUT_MS);
             this.serverCount.set(serverCount);
             this.serverID = serverCount - 1;
 
@@ -389,16 +388,13 @@ public class DPwRServer {
             log.info("This is the main server");
             try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
                 final ArrayList<Long> requests = new ArrayList<>();
-                requests.add(prepareToSendData(tagID, SerializationUtils.serialize("200"), endpoint, scope));
+                requests.add(prepareToSendString(tagID, "200", endpoint, scope));
                 // Send the current server count
                 final int currentServerCount = this.serverCount.incrementAndGet();
-                requests.add(prepareToSendData(tagID, ByteBuffer.allocate(Integer.BYTES).putInt(currentServerCount).array(), endpoint, scope));
+                requests.add(prepareToSendInteger(tagID, currentServerCount, endpoint, scope));
                 // For each server address in the server map first send its size, then the address
                 for (int i = 0; i < currentServerCount; i++) {
-                    final byte[] addressBytes = SerializationUtils.serialize(serverMap.get(i));
-                    final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(addressBytes.length);
-                    requests.add(prepareToSendData(tagID, byteBuffer.array(), endpoint, scope));
-                    requests.add(prepareToSendData(tagID, addressBytes, endpoint, scope));
+                    requests.addAll(prepareToSendAddress(tagID, serverMap.get(i), endpoint, scope));
                 }
                 sendData(requests, worker, CONNECTION_TIMEOUT_MS);
                 this.serverMap.put(currentServerCount - 1, newServerAddress);

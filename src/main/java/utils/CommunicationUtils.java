@@ -11,6 +11,7 @@ import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.SerializationException;
 
+import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
@@ -28,7 +29,7 @@ public class CommunicationUtils {
 
     final private static TimeUnit timeUnit = TimeUnit.MILLISECONDS;
 
-    public static Long prepareToSendData(final int tagID, final byte[] data, final Endpoint endpoint, final ResourceScope scope) {
+    private static Long prepareToSendData(final int tagID, final byte[] data, final Endpoint endpoint, final ResourceScope scope) {
         log.info("Prepare to send data");
         final int dataSize = data.length;
 
@@ -37,6 +38,23 @@ public class CommunicationUtils {
         buffer.copyFrom(source);
 
         return endpoint.sendTagged(buffer, Tag.of(tagID), new RequestParameters());
+    }
+
+    public static Long prepareToSendString(final int tagID, final String string, final Endpoint endpoint, final ResourceScope scope) {
+        return prepareToSendData(tagID, serialize(string), endpoint, scope);
+    }
+
+    public static ArrayList<Long> prepareToSendAddress(final int tagID, final InetSocketAddress address, final Endpoint endpoint, final ResourceScope scope) {
+        final ArrayList<Long> requests = new ArrayList<>();
+        final byte[] addressBytes = serialize(address);
+        requests.add(prepareToSendInteger(tagID, addressBytes.length, endpoint, scope));
+        requests.add(prepareToSendData(tagID, addressBytes, endpoint, scope));
+        return requests;
+    }
+
+    public static Long prepareToSendInteger(final int tagID, final int integer, final Endpoint endpoint, final ResourceScope scope) {
+        final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(integer);
+        return prepareToSendData(tagID, byteBuffer.array(), endpoint, scope);
     }
 
     public static void sendData(final List<Long> requests, final Worker worker, final int timeoutMs) throws TimeoutException {
@@ -93,6 +111,7 @@ public class CommunicationUtils {
         return endpoint.sendTagged(descriptor, Tag.of(tagID));
     }
 
+    //todo rename
     public static void sendObjectAddressAndStatusCode(final int tagID, final ByteBuffer objectBuffer, final Endpoint endpoint, final Worker worker, final Context context, final int timeoutMs) throws ControlException, TimeoutException, CloseException {
         // Prepare objectBytes for transmission
         final MemoryDescriptor objectAddress;
@@ -107,12 +126,13 @@ public class CommunicationUtils {
         // Send status and object address
         final ArrayList<Long> requests = new ArrayList<>();
         try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
-            requests.add(prepareToSendData(tagID, serialize("200"), endpoint, scope));
+            requests.add(prepareToSendString(tagID, "200", endpoint, scope));
             requests.add(prepareToSendRemoteKey(tagID, objectAddress, endpoint));
             sendData(requests, worker, timeoutMs);
         }
     }
 
+    //todo rename
     public static void sendNewEntryAddress(final int tagID, final PlasmaClient plasmaClient, final byte[] id, final int entrySize, final Endpoint endpoint, final Worker worker, final Context context, final int timeoutMs) throws TimeoutException, ControlException, CloseException {
         try {
             // create new plasma entry with correct id and size and send its memory address to client
