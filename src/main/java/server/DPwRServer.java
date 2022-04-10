@@ -9,12 +9,13 @@ import lombok.extern.slf4j.Slf4j;
 import model.PlasmaEntry;
 import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.commons.lang3.ArrayUtils;
+import org.apache.commons.lang3.ObjectUtils;
+import org.apache.commons.lang3.StringUtils;
 import utils.WorkerPool;
 
 import java.net.ConnectException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.*;
@@ -42,7 +43,7 @@ public class DPwRServer {
     private Worker worker;
     private Context context;
     private final InetSocketAddress listenAddress;
-    private final SafeCounterWithoutLock runningTagID = new SafeCounterWithoutLock();
+    private final AtomicInteger runningTagID = new AtomicInteger(0);
     private ExecutorService executorService;
     @SuppressWarnings("FieldCanBeLocal")
     // listener parameter need to stay in memory, since it holds the callback for new connection requests
@@ -132,7 +133,6 @@ public class DPwRServer {
         } else {
             throw new ConnectException("Main server could not be reached");
         }
-
         endpoint.close();
     }
 
@@ -157,7 +157,6 @@ public class DPwRServer {
         } else {
             throw new ConnectException("Secondary server could not be reached");
         }
-
         endpoint.close();
     }
 
@@ -174,7 +173,7 @@ public class DPwRServer {
         }
     }
 
-    private void initialize() throws ControlException, InterruptedException {
+    private void initialize() throws ControlException {
         NativeLogger.enable();
         log.info("Using UCX version {}", Context.getVersion());
 
@@ -210,7 +209,7 @@ public class DPwRServer {
     }
 
     @SuppressWarnings("InfiniteLoopStatement")
-    private void listenLoop() throws InterruptedException, ControlException {
+    private void listenLoop() throws ControlException, InterruptedException {
         final var connectionQueue = new LinkedBlockingQueue<ConnectionRequest>();
 
         log.info("Listening for new connection requests on {}", listenAddress);
@@ -236,8 +235,7 @@ public class DPwRServer {
     private void handleRequest(final ConnectionRequest request, final Worker currentWorker) throws ControlException {
         try (final ResourceScope scope = ResourceScope.newConfinedScope(); final Endpoint endpoint = currentWorker.createEndpoint(new EndpointParameters(scope).setConnectionRequest(request).setPeerErrorHandlingMode())) {
             // Send tagID to client and increment
-            final int tagID = this.runningTagID.getValue();
-            this.runningTagID.increment();
+            final int tagID = this.runningTagID.getAndIncrement();
             sendSingleInteger(0, tagID, endpoint, currentWorker, CONNECTION_TIMEOUT_MS);
 
             final String operationName = receiveOperationName(tagID, currentWorker, CONNECTION_TIMEOUT_MS);
@@ -278,15 +276,13 @@ public class DPwRServer {
             if (ArrayUtils.isEmpty(objectIdWithFreeNextID)) {
                 log.warn("Object with key is already in plasma");
                 sendStatusCode(tagID, "409", endpoint, worker, CONNECTION_TIMEOUT_MS);
-                log.info("Put operation completed \n");
-                return;
+            } else {
+                log.warn("Key is not in plasma, handling id collision");
+                id = generateNextIdOfId(objectIdWithFreeNextID);
+
+                sendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
+                awaitPutCompletionSignal(tagID, plasmaClient, id, worker, objectIdWithFreeNextID, CONNECTION_TIMEOUT_MS, PLASMA_TIMEOUT_MS);
             }
-
-            log.warn("Key is not in plasma, handling id collision");
-            id = generateNextIdOfId(objectIdWithFreeNextID);
-
-            sendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
-            awaitPutCompletionSignal(tagID, plasmaClient, id, worker, objectIdWithFreeNextID, CONNECTION_TIMEOUT_MS, PLASMA_TIMEOUT_MS);
         } else {
             log.info("Plasma does not contain the id");
             sendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
@@ -299,35 +295,24 @@ public class DPwRServer {
         final String keyToGet = receiveKey(tagID, worker, CONNECTION_TIMEOUT_MS);
         final byte[] id = generateID(keyToGet);
 
+        ByteBuffer entryBuffer = null;
+
         if (plasmaClient.contains(id)) {
-            final ByteBuffer objectBuffer = plasmaClient.getObjAsByteBuffer(id, PLASMA_TIMEOUT_MS, false);
-            final PlasmaEntry entry = getPlasmaEntryFromBuffer(objectBuffer);
+            entryBuffer = plasmaClient.getObjAsByteBuffer(id, PLASMA_TIMEOUT_MS, false);
+            final PlasmaEntry entry = getPlasmaEntryFromBuffer(entryBuffer);
 
-            if (keyToGet.equals(entry.key)) {
-                log.info("Entry with id: {} has key: {}", id, keyToGet);
-
-                sendObjectAddressAndStatusCode(tagID, objectBuffer, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
-
-                // Wait for client to signal successful transmission
-                receiveStatusCode(tagID, worker, CONNECTION_TIMEOUT_MS);
-            } else {
+            if (!StringUtils.equals(keyToGet, entry.key)) {
                 log.warn("Entry with id: {} has not key: {}", id, keyToGet);
-                final ByteBuffer bufferOfCorrectEntry = findEntryWithKey(plasmaClient, keyToGet, objectBuffer, PLASMA_TIMEOUT_MS);
-
-                if (bufferOfCorrectEntry != null) {
-                    log.info("Found entry with key: {}", keyToGet);
-
-                    sendObjectAddressAndStatusCode(tagID, bufferOfCorrectEntry, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
-
-                    // Wait for client to signal successful transmission
-                    receiveStatusCode(tagID, worker, CONNECTION_TIMEOUT_MS);
-                } else {
-                    log.warn("Not found entry with key: {}", keyToGet);
-                    sendStatusCode(tagID, "404", endpoint, worker, CONNECTION_TIMEOUT_MS);
-                }
+                entryBuffer = findEntryWithKey(plasmaClient, keyToGet, entryBuffer, PLASMA_TIMEOUT_MS);
             }
+        }
+
+        if (ObjectUtils.isNotEmpty(entryBuffer)) {
+            sendStatusCode(tagID, "200", endpoint, worker, CONNECTION_TIMEOUT_MS);
+            sendObjectAddress(tagID, entryBuffer, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
+            // Wait for client to signal successful transmission
+            receiveStatusCode(tagID, worker, CONNECTION_TIMEOUT_MS);
         } else {
-            log.warn("Not found entry with key: {}", keyToGet);
             sendStatusCode(tagID, "404", endpoint, worker, CONNECTION_TIMEOUT_MS);
         }
         log.info("Get operation completed \n");
@@ -342,16 +327,15 @@ public class DPwRServer {
         if (plasmaClient.contains(id)) {
             log.info("Entry with id {} exists", id);
             final PlasmaEntry entry = getPlasmaEntry(plasmaClient, id, PLASMA_TIMEOUT_MS);
-            log.info(entry.toString());
             statusCode = findAndDeleteEntryWithKey(plasmaClient, keyToDelete, entry, id, PLASMA_TIMEOUT_MS);
         }
 
         if ("204".equals(statusCode)) {
             log.info("Object with key \"{}\" found and deleted", keyToDelete);
-            sendStatusCode(tagID, "204", endpoint, worker, CONNECTION_TIMEOUT_MS);
+            sendStatusCode(tagID, statusCode, endpoint, worker, CONNECTION_TIMEOUT_MS);
         } else {
             log.warn("Object with key \"{}\" was not found in plasma store", keyToDelete);
-            sendStatusCode(tagID, "404", endpoint, worker, CONNECTION_TIMEOUT_MS);
+            sendStatusCode(tagID, statusCode, endpoint, worker, CONNECTION_TIMEOUT_MS);
         }
         log.info("Del operation completed \n");
     }
@@ -366,49 +350,15 @@ public class DPwRServer {
 
         if (this.serverID == 0) {
             log.info("This is the main server");
-            try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
-                final ArrayList<Long> requests = new ArrayList<>();
-                requests.add(prepareToSendString(tagID, "200", endpoint, scope));
-                // Send the current server count
-                final int currentServerCount = this.serverCount.incrementAndGet();
-                requests.add(prepareToSendInteger(tagID, currentServerCount, endpoint, scope));
-                // For each server address in the server map first send its size, then the address
-                for (int i = 0; i < currentServerCount; i++) {
-                    requests.addAll(prepareToSendAddress(tagID, serverMap.get(i), endpoint, scope));
-                }
-                sendData(requests, worker, CONNECTION_TIMEOUT_MS);
-                this.serverMap.put(currentServerCount - 1, newServerAddress);
-            }
+            final int currentServerCount = this.serverCount.incrementAndGet();
+            sendServerMap(tagID, this.serverMap, worker, endpoint, currentServerCount, CONNECTION_TIMEOUT_MS);
+            this.serverMap.put(currentServerCount - 1, newServerAddress);
         } else {
             log.info("This is a secondary server");
             sendStatusCode(tagID, "206", endpoint, worker, CONNECTION_TIMEOUT_MS);
-            final byte[] serverIDBytes = receiveData(tagID, Integer.BYTES, worker, CONNECTION_TIMEOUT_MS);
-            final int serverID = ByteBuffer.wrap(serverIDBytes).getInt();
-
+            final int serverID = receiveInteger(tagID, worker, CONNECTION_TIMEOUT_MS);
             this.serverMap.put(serverID, newServerAddress);
             this.serverCount.incrementAndGet();
-        }
-        log.info(String.valueOf(this.serverID));
-        for (final var entry : this.serverMap.entrySet()) {
-            log.info(entry.getKey() + "/" + entry.getValue());
-        }
-    }
-}
-
-class SafeCounterWithoutLock {
-    private final AtomicInteger counter = new AtomicInteger(0);
-
-    public int getValue() {
-        return counter.get();
-    }
-
-    public void increment() {
-        while (true) {
-            final int existingValue = getValue();
-            final int newValue = existingValue + 1;
-            if (counter.compareAndSet(existingValue, newValue)) {
-                return;
-            }
         }
     }
 }
