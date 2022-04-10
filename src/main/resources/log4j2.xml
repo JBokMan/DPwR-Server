@@ -1,33 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Configuration status="warn">
-    <Properties>
-        <Property name="basePath">C:/temp/logs</Property>
-    </Properties>
+<configuration status="WARN">
+    <appenders>
+        <Console name="SlowConsole" target="SYSTEM_OUT">
+            <PatternLayout disableAnsi="false"  pattern="%highlight{%d{HH:mm:ss.SSS} %-5level %logger{36}.%M() @%L - %msg%n}{FATAL=red blink, ERROR=red, WARN=yellow bold, INFO=blue, DEBUG=green bold, TRACE=black}"/>
+        </Console>
 
-    <Appenders>
-        <RollingFile name="fileLogger"
-                     fileName="${basePath}/app.log"
-                     filePattern="${basePath}/app-%d{yyyy-MM-dd}.log">
-            <PatternLayout>
-                <pattern>[%-5level] %d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %c{1} - %msg%n
-                </pattern>
-            </PatternLayout>
-            <Policies>
-                <TimeBasedTriggeringPolicy interval="1" modulate="true" />
-                <SizeBasedTriggeringPolicy size="1000MB" />
-            </Policies>
-            <!-- Max 10 files will be created everyday -->
-            <DefaultRolloverStrategy max="10">
-                <Delete basePath="${basePathr}" maxDepth="10">
-                    <!-- Delete all files older than 30 days -->
-                    <IfLastModified age="30d" />
-                </Delete>
-            </DefaultRolloverStrategy>
-        </RollingFile>
-    </Appenders>
-    <Loggers>
-        <Root level="all" additivity="false">
-            <appender-ref ref="fileLogger" />
-        </Root>
-    </Loggers>
-</Configuration>
+        <File name="MyFile" fileName="logs/app.log">
+            <PatternLayout pattern="[%-5level] %d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %c{1} - %msg%n"/>
+        </File>
+    </appenders>
+
+    <loggers>
+        <root level="all">
+            <appender-ref ref="SlowConsole" level="all"/>
+            <appender-ref ref="MyFile" level="all"/>
+        </root>
+    </loggers>
+</configuration>
