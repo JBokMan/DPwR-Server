@@ -38,7 +38,7 @@ public class CommunicationUtils {
         final MemorySegment buffer = MemorySegment.allocateNative(dataSize, scope);
         buffer.copyFrom(source);
 
-        return endpoint.sendTagged(buffer, Tag.of(tagID), new RequestParameters(scope));
+        return endpoint.sendTagged(buffer, Tag.of(tagID));
     }
 
     private static Long prepareToSendStatusCode(final int tagID, final String string, final Endpoint endpoint, final ResourceScope scope) {
@@ -88,14 +88,12 @@ public class CommunicationUtils {
                 worker.cancelRequest(request);
                 continue;
             }
-
             try {
                 awaitRequest(request, worker, timeoutMs);
             } catch (final TimeoutException | InterruptedException e) {
                 timeoutHappened = true;
             }
         }
-
         if (timeoutHappened) {
             throw new TimeoutException("A timeout occurred while sending data");
         }
@@ -125,6 +123,13 @@ public class CommunicationUtils {
         sendSingleString(tagID, operationName, endpoint, worker, timeoutMs);
     }
 
+    private static MemoryDescriptor getMemoryDescriptorOfByteBuffer(final ByteBuffer object, final Context context) throws ControlException, CloseException {
+        final MemorySegment source = MemorySegment.ofByteBuffer(object);
+        try (final MemoryRegion memoryRegion = context.mapMemory(source)) {
+            return memoryRegion.descriptor();
+        }
+    }
+
     public static void sendObjectAddress(final int tagID, final ByteBuffer objectBuffer, final Endpoint endpoint, final Worker worker, final Context context, final int timeoutMs) throws CloseException, ControlException, TimeoutException {
         final MemoryDescriptor objectAddress = getMemoryDescriptorOfByteBuffer(objectBuffer, context);
         final Long request = prepareToSendRemoteKey(tagID, objectAddress, endpoint);
@@ -150,13 +155,6 @@ public class CommunicationUtils {
                 requests.addAll(prepareToSendAddress(tagID, serverMap.get(i), endpoint, scope));
             }
             awaitRequests(requests, worker, timeoutMs);
-        }
-    }
-
-    private static MemoryDescriptor getMemoryDescriptorOfByteBuffer(final ByteBuffer object, final Context context) throws ControlException, CloseException {
-        final MemorySegment source = MemorySegment.ofByteBuffer(object);
-        try (final MemoryRegion memoryRegion = context.mapMemory(source)) {
-            return memoryRegion.descriptor();
         }
     }
 
