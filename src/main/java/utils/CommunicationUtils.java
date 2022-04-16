@@ -64,6 +64,7 @@ public class CommunicationUtils {
     }
 
     private static void awaitRequest(final long request, final Worker worker, final int timeoutMs) throws TimeoutException, InterruptedException {
+        log.info("Await request");
         int counter = 0;
         while (state(request) != Requests.State.COMPLETE && counter < timeoutMs) {
             worker.progress();
@@ -81,7 +82,6 @@ public class CommunicationUtils {
     }
 
     private static void awaitRequests(final List<Long> requests, final Worker worker, final int timeoutMs) throws TimeoutException {
-        log.info("Sending data");
         boolean timeoutHappened = false;
         for (final Long request : requests) {
             if (timeoutHappened) {
@@ -136,6 +136,19 @@ public class CommunicationUtils {
         awaitRequests(List.of(request), worker, timeoutMs);
     }
 
+    public static void createEntryAndSendNewEntryAddress(final int tagID, final PlasmaClient plasmaClient, final byte[] id, final int entrySize, final Endpoint endpoint, final Worker worker, final Context context, final int timeoutMs) throws TimeoutException, ControlException, CloseException {
+        // create new plasma entry with correct id and size and send its memory address to client
+        final ByteBuffer byteBuffer = plasmaClient.create(id, entrySize, new byte[0]);
+        try {
+            sendStatusCode(tagID, "200", endpoint, worker, timeoutMs);
+            sendObjectAddress(tagID, byteBuffer, endpoint, worker, context, timeoutMs);
+        } catch (final TimeoutException e) {
+            plasmaClient.seal(id);
+            deleteById(plasmaClient, id);
+            throw e;
+        }
+    }
+
     public static void sendAddress(final int tagID, final InetSocketAddress address, final Endpoint endpoint, final Worker worker, final int timeoutMs) throws TimeoutException {
         try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
             final ArrayList<Long> requests = new ArrayList<>();
@@ -155,20 +168,6 @@ public class CommunicationUtils {
                 requests.addAll(prepareToSendAddress(tagID, serverMap.get(i), endpoint, scope));
             }
             awaitRequests(requests, worker, timeoutMs);
-        }
-    }
-
-    //todo rename
-    public static void sendNewEntryAddress(final int tagID, final PlasmaClient plasmaClient, final byte[] id, final int entrySize, final Endpoint endpoint, final Worker worker, final Context context, final int timeoutMs) throws TimeoutException, ControlException, CloseException {
-        try {
-            // create new plasma entry with correct id and size and send its memory address to client
-            final ByteBuffer byteBuffer = plasmaClient.create(id, entrySize, new byte[0]);
-            sendStatusCode(tagID, "200", endpoint, worker, timeoutMs);
-            sendObjectAddress(tagID, byteBuffer, endpoint, worker, context, timeoutMs);
-        } catch (final TimeoutException e) {
-            plasmaClient.seal(id);
-            deleteById(plasmaClient, id);
-            throw e;
         }
     }
 

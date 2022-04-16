@@ -280,12 +280,12 @@ public class DPwRServer {
                 log.warn("Key is not in plasma, handling id collision");
                 id = generateNextIdOfId(objectIdWithFreeNextID);
 
-                sendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
+                createEntryAndSendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
                 awaitPutCompletionSignal(tagID, plasmaClient, id, worker, objectIdWithFreeNextID, CONNECTION_TIMEOUT_MS, PLASMA_TIMEOUT_MS);
             }
         } else {
             log.info("Plasma does not contain the id");
-            sendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
+            createEntryAndSendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
             awaitPutCompletionSignal(tagID, plasmaClient, id, worker, null, CONNECTION_TIMEOUT_MS, PLASMA_TIMEOUT_MS);
         }
         log.info("Put operation completed \n");
