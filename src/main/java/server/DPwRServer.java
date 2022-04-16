@@ -257,6 +257,10 @@ public class DPwRServer {
                     log.info("Start REG operation");
                     regOperation(tagID, currentWorker, endpoint);
                 }
+                case "INF" -> {
+                    log.info("Start INF operation");
+                    infOperation(tagID, currentWorker, endpoint);
+                }
             }
         } catch (final NullPointerException | CloseException | TimeoutException | ExecutionException | ControlException e) {
             log.error(e.getMessage());
@@ -360,5 +364,11 @@ public class DPwRServer {
             this.serverMap.put(serverID, newServerAddress);
             this.serverCount.incrementAndGet();
         }
+    }
+
+    private void infOperation(int tagID, Worker currentWorker, Endpoint endpoint) throws TimeoutException {
+        final int currentServerCount = this.serverCount.get();
+        sendServerMap(tagID, this.serverMap, worker, endpoint, currentServerCount, CONNECTION_TIMEOUT_MS);
+        receiveStatusCode(tagID, worker, CONNECTION_TIMEOUT_MS);
     }
 }
