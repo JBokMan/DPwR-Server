@@ -11,6 +11,7 @@ import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
+import utils.DPwRErrorHandler;
 import utils.WorkerPool;
 
 import java.net.ConnectException;
@@ -40,6 +41,7 @@ public class DPwRServer {
     private final String plasmaFilePath;
 
     private final ResourcePool resources = new ResourcePool();
+    private static final ErrorHandler errorHandler = new DPwRErrorHandler();
     private static final ContextParameters.Feature[] FEATURE_SET = {ContextParameters.Feature.TAG, ContextParameters.Feature.RMA, ContextParameters.Feature.WAKEUP};
     private static final int CONNECTION_TIMEOUT_MS = 750;
     private static final int PLASMA_TIMEOUT_MS = 500;
@@ -110,7 +112,7 @@ public class DPwRServer {
     private void registerAtMain(final InetSocketAddress mainServerAddress, final Worker worker, final ResourceScope scope) throws ControlException, TimeoutException, ConnectException {
         log.info("Register at main: {}", mainServerAddress);
 
-        final EndpointParameters endpointParams = new EndpointParameters(scope).setRemoteAddress(mainServerAddress).setPeerErrorHandlingMode();
+        final EndpointParameters endpointParams = new EndpointParameters(scope).setRemoteAddress(mainServerAddress).setErrorHandler(errorHandler);
         final Endpoint endpoint = worker.createEndpoint(endpointParams);
 
         final int tagID = receiveTagID(worker, CONNECTION_TIMEOUT_MS);
@@ -142,7 +144,7 @@ public class DPwRServer {
     private void registerAtSecondary(final InetSocketAddress address, final Worker worker, final ResourceScope scope) throws TimeoutException, ConnectException, ControlException {
         log.info("Register at secondary: {}", address);
 
-        final EndpointParameters endpointParams = new EndpointParameters(scope).setRemoteAddress(address).setPeerErrorHandlingMode();
+        final EndpointParameters endpointParams = new EndpointParameters(scope).setRemoteAddress(address).setErrorHandler(errorHandler);
         final Endpoint endpoint = worker.createEndpoint(endpointParams);
 
         final int tagID = receiveTagID(worker, CONNECTION_TIMEOUT_MS);
@@ -237,7 +239,7 @@ public class DPwRServer {
     }
 
     private void handleRequest(final ConnectionRequest request, final Worker currentWorker) throws ControlException, TimeoutException, CloseException {
-        try (final ResourceScope scope = ResourceScope.newConfinedScope(); final Endpoint endpoint = currentWorker.createEndpoint(new EndpointParameters(scope).setConnectionRequest(request).setPeerErrorHandlingMode())) {
+        try (final ResourceScope scope = ResourceScope.newConfinedScope(); final Endpoint endpoint = currentWorker.createEndpoint(new EndpointParameters(scope).setConnectionRequest(request).setErrorHandler(errorHandler))) {
             // Send tagID to client and increment
             final int tagID = this.runningTagID.getAndIncrement();
             sendSingleInteger(0, tagID, endpoint, currentWorker, CONNECTION_TIMEOUT_MS);
