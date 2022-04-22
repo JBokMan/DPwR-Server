@@ -18,7 +18,10 @@ import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static utils.CommunicationUtils.*;
@@ -187,8 +190,9 @@ public class DPwRServer {
         final WorkerParameters workerParameters = new WorkerParameters().setThreadMode(ThreadMode.SINGLE);
         this.worker = pushResource(context.createWorker(workerParameters));
 
-        this.workerPool = new WorkerPool(2, workerParameters, context);
-        this.executorService = Executors.newFixedThreadPool(2);
+        // worker pool count must be greater than thread count since the endpoint closes not fast enough
+        this.workerPool = new WorkerPool(32, workerParameters, context);
+        this.executorService = Executors.newFixedThreadPool(8);
 
         // Creating clean up hook
         final Thread cleanUpThread = new Thread(() -> {
@@ -224,16 +228,15 @@ public class DPwRServer {
                 executorService.submit(() -> {
                     try {
                         handleRequest(request, currentWorker);
-                    } catch (final ControlException | TimeoutException | CloseException | ExecutionException e) {
+                    } catch (final ControlException | CloseException | TimeoutException e) {
                         log.error(e.getMessage());
-                        workerPool.resetWorker(currentWorker, context);
                     }
                 });
             }
         }
     }
 
-    private void handleRequest(final ConnectionRequest request, final Worker currentWorker) throws ControlException, TimeoutException, ExecutionException, CloseException {
+    private void handleRequest(final ConnectionRequest request, final Worker currentWorker) throws ControlException, TimeoutException, CloseException {
         try (final ResourceScope scope = ResourceScope.newConfinedScope(); final Endpoint endpoint = currentWorker.createEndpoint(new EndpointParameters(scope).setConnectionRequest(request).setPeerErrorHandlingMode())) {
             // Send tagID to client and increment
             final int tagID = this.runningTagID.getAndIncrement();
