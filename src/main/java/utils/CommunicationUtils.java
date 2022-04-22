@@ -38,7 +38,7 @@ public class CommunicationUtils {
         final MemorySegment buffer = MemorySegment.allocateNative(dataSize, scope);
         buffer.copyFrom(source);
 
-        return endpoint.sendTagged(buffer, Tag.of(tagID));
+        return endpoint.sendTagged(buffer, Tag.of(tagID), new RequestParameters(scope));
     }
 
     private static Long prepareToSendStatusCode(final int tagID, final String string, final Endpoint endpoint, final ResourceScope scope) {
@@ -58,9 +58,9 @@ public class CommunicationUtils {
         return requests;
     }
 
-    private static Long prepareToSendRemoteKey(final int tagID, final MemoryDescriptor descriptor, final Endpoint endpoint) {
+    private static Long prepareToSendRemoteKey(final int tagID, final MemoryDescriptor descriptor, final Endpoint endpoint, final ResourceScope scope) {
         log.info("Prepare to send remote key");
-        return endpoint.sendTagged(descriptor, Tag.of(tagID));
+        return endpoint.sendTagged(descriptor, Tag.of(tagID), new RequestParameters(scope));
     }
 
     private static void awaitRequest(final long request, final Worker worker, final int timeoutMs) throws TimeoutException, InterruptedException {
@@ -92,6 +92,7 @@ public class CommunicationUtils {
                 awaitRequest(request, worker, timeoutMs);
             } catch (final TimeoutException | InterruptedException e) {
                 timeoutHappened = true;
+                worker.cancelRequest(request);
             }
         }
         if (timeoutHappened) {
@@ -132,8 +133,10 @@ public class CommunicationUtils {
 
     public static void sendObjectAddress(final int tagID, final ByteBuffer objectBuffer, final Endpoint endpoint, final Worker worker, final Context context, final int timeoutMs) throws CloseException, ControlException, TimeoutException {
         final MemoryDescriptor objectAddress = getMemoryDescriptorOfByteBuffer(objectBuffer, context);
-        final Long request = prepareToSendRemoteKey(tagID, objectAddress, endpoint);
-        awaitRequests(List.of(request), worker, timeoutMs);
+        try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
+            final Long request = prepareToSendRemoteKey(tagID, objectAddress, endpoint, scope);
+            awaitRequests(List.of(request), worker, timeoutMs);
+        }
     }
 
     public static void createEntryAndSendNewEntryAddress(final int tagID, final PlasmaClient plasmaClient, final byte[] id, final int entrySize, final Endpoint endpoint, final Worker worker, final Context context, final int timeoutMs) throws TimeoutException, ControlException, CloseException {
