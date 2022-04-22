@@ -187,7 +187,7 @@ public class DPwRServer {
         final WorkerParameters workerParameters = new WorkerParameters().setThreadMode(ThreadMode.SINGLE);
         this.worker = pushResource(context.createWorker(workerParameters));
 
-        this.workerPool = new WorkerPool(6, workerParameters, context);
+        this.workerPool = new WorkerPool(2, workerParameters, context);
         this.executorService = Executors.newFixedThreadPool(2);
 
         // Creating clean up hook
@@ -210,7 +210,7 @@ public class DPwRServer {
 
     @SuppressWarnings("InfiniteLoopStatement")
     private void listenLoop() throws ControlException, InterruptedException {
-        final var connectionQueue = new LinkedBlockingQueue<ConnectionRequest>();
+        final LinkedBlockingQueue<ConnectionRequest> connectionQueue = new LinkedBlockingQueue<>();
 
         log.info("Listening for new connection requests on {}", listenAddress);
         this.listenerParameters = new ListenerParameters().setListenAddress(listenAddress).setConnectionHandler(connectionQueue::add);
@@ -224,15 +224,16 @@ public class DPwRServer {
                 executorService.submit(() -> {
                     try {
                         handleRequest(request, currentWorker);
-                    } catch (final ControlException e) {
-                        e.printStackTrace();
+                    } catch (final ControlException | TimeoutException | CloseException | ExecutionException e) {
+                        log.error(e.getMessage());
+                        workerPool.resetWorker(currentWorker, context);
                     }
                 });
             }
         }
     }
 
-    private void handleRequest(final ConnectionRequest request, final Worker currentWorker) throws ControlException {
+    private void handleRequest(final ConnectionRequest request, final Worker currentWorker) throws ControlException, TimeoutException, ExecutionException, CloseException {
         try (final ResourceScope scope = ResourceScope.newConfinedScope(); final Endpoint endpoint = currentWorker.createEndpoint(new EndpointParameters(scope).setConnectionRequest(request).setPeerErrorHandlingMode())) {
             // Send tagID to client and increment
             final int tagID = this.runningTagID.getAndIncrement();
@@ -262,8 +263,6 @@ public class DPwRServer {
                     infOperation(tagID, currentWorker, endpoint);
                 }
             }
-        } catch (final NullPointerException | CloseException | TimeoutException | ExecutionException | ControlException e) {
-            log.error(e.getMessage());
         }
     }
 
@@ -295,7 +294,7 @@ public class DPwRServer {
         log.info("Put operation completed \n");
     }
 
-    private void getOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws ControlException, ExecutionException, TimeoutException, CloseException {
+    private void getOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws ControlException, TimeoutException, CloseException {
         final String keyToGet = receiveKey(tagID, worker, CONNECTION_TIMEOUT_MS);
         final byte[] id = generateID(keyToGet);
 
@@ -322,7 +321,7 @@ public class DPwRServer {
         log.info("Get operation completed \n");
     }
 
-    private void delOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws ExecutionException, TimeoutException, NullPointerException {
+    private void delOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException, NullPointerException {
         final String keyToDelete = receiveKey(tagID, worker, CONNECTION_TIMEOUT_MS);
         final byte[] id = generateID(keyToDelete);
 
@@ -366,9 +365,9 @@ public class DPwRServer {
         }
     }
 
-    private void infOperation(int tagID, Worker currentWorker, Endpoint endpoint) throws TimeoutException {
+    private void infOperation(final int tagID, final Worker currentWorker, final Endpoint endpoint) throws TimeoutException {
         final int currentServerCount = this.serverCount.get();
-        sendServerMap(tagID, this.serverMap, worker, endpoint, currentServerCount, CONNECTION_TIMEOUT_MS);
-        receiveStatusCode(tagID, worker, CONNECTION_TIMEOUT_MS);
+        sendServerMap(tagID, this.serverMap, currentWorker, endpoint, currentServerCount, CONNECTION_TIMEOUT_MS);
+        receiveStatusCode(tagID, currentWorker, CONNECTION_TIMEOUT_MS);
     }
 }
