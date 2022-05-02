@@ -296,7 +296,7 @@ public class DPwRServer {
             createEntryAndSendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
             awaitPutCompletionSignal(tagID, plasmaClient, id, worker, null, CONNECTION_TIMEOUT_MS, PLASMA_TIMEOUT_MS);
         }
-        log.info("Put operation completed \n");
+        log.info("Put operation completed");
     }
 
     private void getOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws ControlException, TimeoutException, CloseException {
@@ -323,7 +323,7 @@ public class DPwRServer {
         } else {
             sendStatusCode(tagID, "404", endpoint, worker, CONNECTION_TIMEOUT_MS);
         }
-        log.info("Get operation completed \n");
+        log.info("Get operation completed");
     }
 
     private void delOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException, NullPointerException {
@@ -345,7 +345,7 @@ public class DPwRServer {
             log.warn("Object with key \"{}\" was not found in plasma store", keyToDelete);
             sendStatusCode(tagID, statusCode, endpoint, worker, CONNECTION_TIMEOUT_MS);
         }
-        log.info("Del operation completed \n");
+        log.info("Del operation completed");
     }
 
     private void regOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException {
