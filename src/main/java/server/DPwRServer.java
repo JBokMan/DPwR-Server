@@ -193,7 +193,7 @@ public class DPwRServer {
         this.worker = pushResource(context.createWorker(workerParameters));
 
         // worker pool count must be greater than thread count since the endpoint closes not fast enough
-        this.workerPool = new WorkerPool(32, workerParameters, context);
+        this.workerPool = new WorkerPool(256, workerParameters, context);
         this.executorService = Executors.newFixedThreadPool(8);
 
         // Creating clean up hook
