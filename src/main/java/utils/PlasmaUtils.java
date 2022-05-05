@@ -7,6 +7,7 @@ import org.apache.arrow.plasma.exceptions.DuplicateObjectException;
 import org.apache.arrow.plasma.exceptions.PlasmaOutOfMemoryException;
 
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 
 import static org.apache.commons.lang3.SerializationUtils.deserialize;
 import static org.apache.commons.lang3.SerializationUtils.serialize;
@@ -85,7 +86,7 @@ public class PlasmaUtils {
         }
     }
 
-    public static String findAndDeleteEntryWithKey(final PlasmaClient plasmaClient, final String keyToDelete, final PlasmaEntry startEntry, final byte[] startID, final int plasmaTimeoutMs) {
+    public static String findAndDeleteEntryWithKey(final PlasmaClient plasmaClient, final String keyToDelete, final PlasmaEntry startEntry, final byte[] startID, final byte[] previousID, final int plasmaTimeoutMs) {
         final byte[] nextID = startEntry.nextPlasmaID;
 
         if (keyToDelete.equals(startEntry.key)) {
@@ -102,10 +103,14 @@ public class PlasmaUtils {
                 deleteById(plasmaClient, startID);
                 plasmaClient.put(startID, nextEntryBytes, new byte[0]);
                 nextEntry.nextPlasmaID = nextNextID;
-                return findAndDeleteEntryWithKey(plasmaClient, nextEntry.key, nextEntry, nextID, plasmaTimeoutMs);
+                return findAndDeleteEntryWithKey(plasmaClient, nextEntry.key, nextEntry, nextID, startID, plasmaTimeoutMs);
             } else {
                 log.info("Entry with next id {} does not exist", nextID);
                 deleteById(plasmaClient, startID);
+                log.info("Previous id : {}", previousID);
+                if (!Arrays.equals(previousID, new byte[20])) {
+                    updateNextIdOfEntry(plasmaClient, previousID, new byte[20], plasmaTimeoutMs);
+                }
                 return "204";
             }
         } else {
@@ -113,7 +118,7 @@ public class PlasmaUtils {
             if (plasmaClient.contains(nextID)) {
                 log.info("Entry with next id {} exists", nextID);
                 final PlasmaEntry nextEntry = deserialize(plasmaClient.get(nextID, plasmaTimeoutMs, false));
-                return findAndDeleteEntryWithKey(plasmaClient, keyToDelete, nextEntry, nextID, plasmaTimeoutMs);
+                return findAndDeleteEntryWithKey(plasmaClient, keyToDelete, nextEntry, nextID, startID, plasmaTimeoutMs);
             } else {
                 log.info("Entry with next id {} does not exist", nextID);
                 return "404";

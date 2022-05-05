@@ -335,7 +335,7 @@ public class DPwRServer {
         if (plasmaClient.contains(id)) {
             log.info("Entry with id {} exists", id);
             final PlasmaEntry entry = getPlasmaEntry(plasmaClient, id, PLASMA_TIMEOUT_MS);
-            statusCode = findAndDeleteEntryWithKey(plasmaClient, keyToDelete, entry, id, PLASMA_TIMEOUT_MS);
+            statusCode = findAndDeleteEntryWithKey(plasmaClient, keyToDelete, entry, id, new byte[20], PLASMA_TIMEOUT_MS);
         }
 
         if ("204".equals(statusCode)) {
