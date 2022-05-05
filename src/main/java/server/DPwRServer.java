@@ -340,11 +340,10 @@ public class DPwRServer {
 
         if ("204".equals(statusCode)) {
             log.info("Object with key \"{}\" found and deleted", keyToDelete);
-            sendStatusCode(tagID, statusCode, endpoint, worker, CONNECTION_TIMEOUT_MS);
         } else {
             log.warn("Object with key \"{}\" was not found in plasma store", keyToDelete);
-            sendStatusCode(tagID, statusCode, endpoint, worker, CONNECTION_TIMEOUT_MS);
         }
+        sendStatusCode(tagID, statusCode, endpoint, worker, CONNECTION_TIMEOUT_MS);
         log.info("Del operation completed");
     }
 
