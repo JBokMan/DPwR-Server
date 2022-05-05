@@ -33,27 +33,25 @@ import static utils.PlasmaUtils.*;
 @Slf4j
 public class DPwRServer {
 
-    int serverID = -1;
-    private final AtomicInteger serverCount = new AtomicInteger(1);
-    private final Map<Integer, InetSocketAddress> serverMap = new HashMap<>();
-
-    private PlasmaClient plasmaClient;
-    private final String plasmaFilePath;
-
-    private final ResourcePool resources = new ResourcePool();
     private static final ErrorHandler errorHandler = new DPwRErrorHandler();
     private static final ContextParameters.Feature[] FEATURE_SET = {ContextParameters.Feature.TAG, ContextParameters.Feature.RMA, ContextParameters.Feature.WAKEUP};
     private static final int CONNECTION_TIMEOUT_MS = 750;
     private static final int PLASMA_TIMEOUT_MS = 500;
-    private Worker worker;
-    private Context context;
+    private final AtomicInteger serverCount = new AtomicInteger(1);
+    private final Map<Integer, InetSocketAddress> serverMap = new HashMap<>();
+    private final String plasmaFilePath;
+    private final ResourcePool resources = new ResourcePool();
     private final InetSocketAddress listenAddress;
     private final AtomicInteger runningTagID = new AtomicInteger(0);
+    private PlasmaClient plasmaClient;
+    private Worker worker;
+    private Context context;
     private ExecutorService executorService;
-    @SuppressWarnings("FieldCanBeLocal")
     // listener parameter need to stay in memory, since it holds the callback for new connection requests
+    @SuppressWarnings("FieldCanBeLocal")
     private ListenerParameters listenerParameters;
     private WorkerPool workerPool;
+    private int serverID = -1;
 
     public DPwRServer(final String plasmaFilePath, final String listenAddress, final Integer listenPort) {
         this.listenAddress = new InetSocketAddress(listenAddress, listenPort);

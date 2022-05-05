@@ -23,24 +23,26 @@ public class PlasmaUtils {
         log.info("Entry deleted");
     }
 
-    public static void saveObjectToPlasma(final PlasmaClient plasmaClient, final byte[] id, final byte[] object, final byte[] metadata) throws DuplicateObjectException, PlasmaOutOfMemoryException {
-        final ByteBuffer byteBuffer = plasmaClient.create(id, object.length, metadata);
+    public static void saveObjectToPlasma(final PlasmaClient plasmaClient, final byte[] id, final byte[] object) throws DuplicateObjectException, PlasmaOutOfMemoryException {
+        log.info("Save object with id: {} to plasma", id);
+        final ByteBuffer byteBuffer = plasmaClient.create(id, object.length, new byte[0]);
         for (final byte b : object) {
             byteBuffer.put(b);
         }
         plasmaClient.seal(id);
     }
 
-    public static void updateNextIdOfEntry(final PlasmaClient plasmaClient, final byte[] idToUpdate, final byte[] newNextId, final int plasmaTimeoutMs) {
-        final PlasmaEntry entryToUpdate = deserialize(plasmaClient.get(idToUpdate, plasmaTimeoutMs, false));
-        deleteById(plasmaClient, idToUpdate);
-        final PlasmaEntry updatedEntry = new PlasmaEntry(entryToUpdate.key, entryToUpdate.value, newNextId);
-        saveObjectToPlasma(plasmaClient, idToUpdate, serialize(updatedEntry), new byte[0]);
-    }
-
     public static PlasmaEntry getPlasmaEntry(final PlasmaClient client, final byte[] id, final int timeoutMs) {
         final byte[] entry = client.get(id, timeoutMs, false);
         return deserialize(entry);
+    }
+
+    public static void updateNextIdOfEntry(final PlasmaClient plasmaClient, final byte[] idToUpdate, final byte[] newNextId, final int plasmaTimeoutMs) {
+        log.info("Update entry of id {}", idToUpdate);
+        final PlasmaEntry entryToUpdate = getPlasmaEntry(plasmaClient, idToUpdate, plasmaTimeoutMs);
+        deleteById(plasmaClient, idToUpdate);
+        final PlasmaEntry updatedEntry = new PlasmaEntry(entryToUpdate.key, entryToUpdate.value, newNextId);
+        saveObjectToPlasma(plasmaClient, idToUpdate, serialize(updatedEntry));
     }
 
     public static byte[] getObjectIdOfNextEntryWithEmptyNextID(final PlasmaClient plasmaClient, final PlasmaEntry startEntry, final byte[] startId, final String keyToCheck, final int plasmaTimeoutMs) {
