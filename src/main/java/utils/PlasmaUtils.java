@@ -13,22 +13,33 @@ import static org.apache.commons.lang3.SerializationUtils.serialize;
 
 @Slf4j
 public class PlasmaUtils {
-
-    public static ByteBuffer findEntryWithKey(final PlasmaClient plasmaClient, final String key, final ByteBuffer startBuffer, final int plasmaTimeoutMs) {
-        ByteBuffer currentBuffer = startBuffer;
-        PlasmaEntry currentEntry = getPlasmaEntryFromBuffer(currentBuffer);
-
-        byte[] nextID = currentEntry.nextPlasmaID;
-        while (!key.equals(currentEntry.key) && plasmaClient.contains(nextID)) {
-            currentBuffer = plasmaClient.getObjAsByteBuffer(nextID, plasmaTimeoutMs, false);
-            currentEntry = getPlasmaEntryFromBuffer(currentBuffer);
-            nextID = currentEntry.nextPlasmaID;
+    public static void deleteById(final PlasmaClient plasmaClient, final byte[] id) {
+        log.info("Deleting {} ...", id);
+        while (plasmaClient.contains(id)) {
+            plasmaClient.release(id);
+            plasmaClient.delete(id);
         }
-        if (key.equals(currentEntry.key)) {
-            return currentBuffer;
-        } else {
-            return null;
+        log.info("Entry deleted");
+    }
+
+    public static void saveObjectToPlasma(final PlasmaClient plasmaClient, final byte[] id, final byte[] object, final byte[] metadata) throws DuplicateObjectException, PlasmaOutOfMemoryException {
+        final ByteBuffer byteBuffer = plasmaClient.create(id, object.length, metadata);
+        for (final byte b : object) {
+            byteBuffer.put(b);
         }
+        plasmaClient.seal(id);
+    }
+
+    public static void updateNextIdOfEntry(final PlasmaClient plasmaClient, final byte[] idToUpdate, final byte[] newNextId, final int plasmaTimeoutMs) {
+        final PlasmaEntry entryToUpdate = deserialize(plasmaClient.get(idToUpdate, plasmaTimeoutMs, false));
+        deleteById(plasmaClient, idToUpdate);
+        final PlasmaEntry updatedEntry = new PlasmaEntry(entryToUpdate.key, entryToUpdate.value, newNextId);
+        saveObjectToPlasma(plasmaClient, idToUpdate, serialize(updatedEntry), new byte[0]);
+    }
+
+    public static PlasmaEntry getPlasmaEntry(final PlasmaClient client, final byte[] id, final int timeoutMs) {
+        final byte[] entry = client.get(id, timeoutMs, false);
+        return deserialize(entry);
     }
 
     public static byte[] getObjectIdOfNextEntryWithEmptyNextID(final PlasmaClient plasmaClient, final PlasmaEntry startEntry, final byte[] startId, final String keyToCheck, final int plasmaTimeoutMs) {
@@ -50,19 +61,28 @@ public class PlasmaUtils {
         return currentID;
     }
 
-    public static void updateNextIdOfEntry(final PlasmaClient plasmaClient, final byte[] idToUpdate, final byte[] newNextId, final int plasmaTimeoutMs) {
-        final PlasmaEntry entryToUpdate = deserialize(plasmaClient.get(idToUpdate, plasmaTimeoutMs, false));
-        deleteById(plasmaClient, idToUpdate);
-        final PlasmaEntry updatedEntry = new PlasmaEntry(entryToUpdate.key, entryToUpdate.value, newNextId);
-        saveObjectToPlasma(plasmaClient, idToUpdate, serialize(updatedEntry), new byte[0]);
+    public static PlasmaEntry getPlasmaEntryFromBuffer(final ByteBuffer objectBuffer) {
+        final byte[] data = new byte[objectBuffer.remaining()];
+        objectBuffer.get(data);
+        objectBuffer.position(0);
+        return deserialize(data);
     }
 
-    public static void saveObjectToPlasma(final PlasmaClient plasmaClient, final byte[] id, final byte[] object, final byte[] metadata) throws DuplicateObjectException, PlasmaOutOfMemoryException {
-        final ByteBuffer byteBuffer = plasmaClient.create(id, object.length, metadata);
-        for (final byte b : object) {
-            byteBuffer.put(b);
+    public static ByteBuffer findEntryWithKey(final PlasmaClient plasmaClient, final String key, final ByteBuffer startBuffer, final int plasmaTimeoutMs) {
+        ByteBuffer currentBuffer = startBuffer;
+        PlasmaEntry currentEntry = getPlasmaEntryFromBuffer(currentBuffer);
+
+        byte[] nextID = currentEntry.nextPlasmaID;
+        while (!key.equals(currentEntry.key) && plasmaClient.contains(nextID)) {
+            currentBuffer = plasmaClient.getObjAsByteBuffer(nextID, plasmaTimeoutMs, false);
+            currentEntry = getPlasmaEntryFromBuffer(currentBuffer);
+            nextID = currentEntry.nextPlasmaID;
         }
-        plasmaClient.seal(id);
+        if (key.equals(currentEntry.key)) {
+            return currentBuffer;
+        } else {
+            return null;
+        }
     }
 
     public static String findAndDeleteEntryWithKey(final PlasmaClient plasmaClient, final String keyToDelete, final PlasmaEntry startEntry, final byte[] startID, final int plasmaTimeoutMs) {
@@ -99,26 +119,5 @@ public class PlasmaUtils {
                 return "404";
             }
         }
-    }
-
-    public static void deleteById(final PlasmaClient plasmaClient, final byte[] id) {
-        log.info("Deleting {} ...", id);
-        while (plasmaClient.contains(id)) {
-            plasmaClient.release(id);
-            plasmaClient.delete(id);
-        }
-        log.info("Entry deleted");
-    }
-
-    public static PlasmaEntry getPlasmaEntryFromBuffer(final ByteBuffer objectBuffer) {
-        final byte[] data = new byte[objectBuffer.remaining()];
-        objectBuffer.get(data);
-        objectBuffer.position(0);
-        return deserialize(data);
-    }
-
-    public static PlasmaEntry getPlasmaEntry(final PlasmaClient client, final byte[] id, final int timeoutMs) {
-        final byte[] entry = client.get(id, timeoutMs, false);
-        return deserialize(entry);
     }
 }
