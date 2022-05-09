@@ -83,7 +83,7 @@ public class CommunicationUtils {
         }
     }
 
-    private static void awaitRequests(final List<Long> requests, final Worker worker, final int timeoutMs) throws TimeoutException {
+    public static void awaitRequests(final List<Long> requests, final Worker worker, final int timeoutMs) throws TimeoutException {
         boolean timeoutHappened = false;
         for (final Long request : requests) {
             if (timeoutHappened) {
