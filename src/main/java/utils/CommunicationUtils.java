@@ -19,6 +19,8 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import static de.hhu.bsinfo.infinileap.example.util.Requests.State.COMPLETE;
+import static de.hhu.bsinfo.infinileap.example.util.Requests.State.ERROR;
 import static de.hhu.bsinfo.infinileap.example.util.Requests.state;
 import static org.apache.commons.lang3.SerializationUtils.deserialize;
 import static org.apache.commons.lang3.SerializationUtils.serialize;
@@ -66,14 +68,14 @@ public class CommunicationUtils {
     private static void awaitRequest(final long request, final Worker worker, final int timeoutMs) throws TimeoutException, InterruptedException {
         log.info("Await request");
         int counter = 0;
-        while (state(request) != Requests.State.COMPLETE && counter < timeoutMs) {
+        while ((state(request) != COMPLETE) && (state(request) != ERROR) && (counter < timeoutMs)) {
             worker.progress();
             synchronized (timeUnit) {
                 timeUnit.wait(1);
             }
             counter++;
         }
-        if (state(request) != Requests.State.COMPLETE) {
+        if (state(request) != COMPLETE) {
             worker.cancelRequest(request);
             throw new TimeoutException("A timeout occurred while receiving data");
         } else {
