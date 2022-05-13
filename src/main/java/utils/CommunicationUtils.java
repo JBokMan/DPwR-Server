@@ -246,4 +246,14 @@ public class CommunicationUtils {
             }
         }
     }
+
+    public static void tearDownEndpoint(final Endpoint endpoint, final Worker worker, final int timeoutMs) {
+        try {
+            final ArrayList<Long> requests = new ArrayList<>();
+            requests.add(endpoint.closeNonBlocking());
+            awaitRequests(requests, worker, timeoutMs);
+        } catch (final TimeoutException e) {
+            log.warn(e.getMessage());
+        }
+    }
 }

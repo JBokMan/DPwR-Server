@@ -17,7 +17,6 @@ import utils.WorkerPool;
 import java.net.ConnectException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -36,7 +35,7 @@ public class DPwRServer {
 
     private static final ErrorHandler errorHandler = new DPwRErrorHandler();
     private static final ContextParameters.Feature[] FEATURE_SET = {ContextParameters.Feature.TAG, ContextParameters.Feature.RMA, ContextParameters.Feature.WAKEUP};
-    private static final int CONNECTION_TIMEOUT_MS = 10000;
+    private static final int CONNECTION_TIMEOUT_MS = 500;
     private static final int PLASMA_TIMEOUT_MS = 500;
     private final AtomicInteger serverCount = new AtomicInteger(1);
     private final Map<Integer, InetSocketAddress> serverMap = new HashMap<>();
@@ -237,9 +236,10 @@ public class DPwRServer {
         }
     }
 
-    private void handleRequest(final ConnectionRequest request, final Worker currentWorker) throws ControlException, TimeoutException, CloseException {
-        try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
-            final Endpoint endpoint = currentWorker.createEndpoint(new EndpointParameters(scope).setConnectionRequest(request).setErrorHandler(errorHandler));
+    private void handleRequest(final ConnectionRequest request, final Worker currentWorker) throws ControlException, CloseException, TimeoutException {
+        final ResourceScope scope = ResourceScope.newConfinedScope();
+        final Endpoint endpoint = currentWorker.createEndpoint(new EndpointParameters(scope).setConnectionRequest(request).setErrorHandler(errorHandler));
+        try {
             // Send tagID to client and increment
             final int tagID = this.runningTagID.getAndIncrement();
             sendSingleInteger(0, tagID, endpoint, currentWorker, CONNECTION_TIMEOUT_MS);
@@ -268,14 +268,9 @@ public class DPwRServer {
                     infOperation(tagID, currentWorker, endpoint);
                 }
             }
-            try {
-                final ArrayList<Long> requests = new ArrayList<>();
-                requests.add(endpoint.flush());
-                requests.add(endpoint.closeNonBlocking());
-                awaitRequests(requests, currentWorker, CONNECTION_TIMEOUT_MS);
-            } catch (final TimeoutException e) {
-                log.warn(e.getMessage());
-            }
+        } finally {
+            tearDownEndpoint(endpoint, currentWorker, CONNECTION_TIMEOUT_MS);
+            scope.close();
         }
     }
 
@@ -352,7 +347,6 @@ public class DPwRServer {
             log.warn("Object with key \"{}\" was not found in plasma store", keyToDelete);
         }
         sendStatusCode(tagID, statusCode, endpoint, worker, CONNECTION_TIMEOUT_MS);
-        receiveStatusCode(tagID, worker, CONNECTION_TIMEOUT_MS);
         log.info("Del operation completed");
     }
 
