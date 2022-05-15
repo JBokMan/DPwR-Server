@@ -375,6 +375,5 @@ public class DPwRServer {
     private void infOperation(final int tagID, final Worker currentWorker, final Endpoint endpoint) throws TimeoutException {
         final int currentServerCount = this.serverCount.get();
         sendServerMap(tagID, this.serverMap, currentWorker, endpoint, currentServerCount, CONNECTION_TIMEOUT_MS);
-        receiveStatusCode(tagID, currentWorker, CONNECTION_TIMEOUT_MS);
     }
 }
