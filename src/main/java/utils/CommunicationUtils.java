@@ -43,10 +43,6 @@ public class CommunicationUtils {
         return endpoint.sendTagged(buffer, Tag.of(tagID), new RequestParameters(scope));
     }
 
-    private static Long prepareToSendStatusCode(final int tagID, final String string, final Endpoint endpoint, final ResourceScope scope) {
-        return prepareToSendData(tagID, serialize(string), endpoint, scope);
-    }
-
     private static Long prepareToSendInteger(final int tagID, final int integer, final Endpoint endpoint, final ResourceScope scope) {
         final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(integer);
         return prepareToSendData(tagID, byteBuffer.array(), endpoint, scope);
@@ -133,8 +129,36 @@ public class CommunicationUtils {
         }
     }
 
+    private static MemoryDescriptor getMemoryDescriptorOfByteArray(final byte[] object, final Context context) throws ControlException, CloseException {
+        final MemorySegment source = MemorySegment.ofArray(object);
+        try(final MemoryRegion memoryRegion = context.allocateMemory(object.length)) {
+            memoryRegion.segment().copyFrom(source);
+            return memoryRegion.descriptor();
+        }
+    }
+
     public static void sendObjectAddress(final int tagID, final ByteBuffer objectBuffer, final Endpoint endpoint, final Worker worker, final Context context, final int timeoutMs) throws CloseException, ControlException, TimeoutException {
-        final MemoryDescriptor objectAddress = getMemoryDescriptorOfByteBuffer(objectBuffer, context);
+        log.info("Send object address");
+        MemoryDescriptor objectAddress = null;
+        try {
+            objectAddress = getMemoryDescriptorOfByteBuffer(objectBuffer, context);
+        } catch (final UnsupportedOperationException e) {
+            log.error(e.getMessage());
+        }
+        try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
+            final Long request = prepareToSendRemoteKey(tagID, objectAddress, endpoint, scope);
+            awaitRequests(List.of(request), worker, timeoutMs);
+        }
+    }
+
+    public static void sendObjectAddress(final int tagID, final byte[] object, final Endpoint endpoint, final Worker worker, final Context context, final int timeoutMs) throws CloseException, ControlException, TimeoutException {
+        log.info("Send object address");
+        MemoryDescriptor objectAddress = null;
+        try {
+            objectAddress = getMemoryDescriptorOfByteArray(object, context);
+        } catch (final UnsupportedOperationException e) {
+            log.error(e.getMessage());
+        }
         try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
             final Long request = prepareToSendRemoteKey(tagID, objectAddress, endpoint, scope);
             awaitRequests(List.of(request), worker, timeoutMs);
@@ -151,6 +175,15 @@ public class CommunicationUtils {
             plasmaClient.seal(id);
             deleteById(plasmaClient, id);
             throw e;
+        }
+    }
+
+    public static void sendHash(final int tagID, final byte[] hash, final Endpoint endpoint, final Worker worker, final int timeoutMs) throws TimeoutException {
+        try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
+            final ArrayList<Long> requests = new ArrayList<>();
+            requests.add(prepareToSendInteger(tagID, hash.length, endpoint, scope));
+            requests.add(prepareToSendData(tagID, hash, endpoint, scope));
+            awaitRequests(requests, worker, timeoutMs);
         }
     }
 
