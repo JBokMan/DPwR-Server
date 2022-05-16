@@ -167,7 +167,6 @@ public class CommunicationUtils {
     public static void sendServerMap(final int tagID, final Map<Integer, InetSocketAddress> serverMap, final Worker worker, final Endpoint endpoint, final int currentServerCount, final int timeoutMs) throws TimeoutException {
         final ArrayList<Long> requests = new ArrayList<>();
         try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
-            requests.add(prepareToSendStatusCode(tagID, "200", endpoint, scope));
             requests.add(prepareToSendInteger(tagID, currentServerCount, endpoint, scope));
             for (int i = 0; i < currentServerCount; i++) {
                 requests.addAll(prepareToSendAddress(tagID, serverMap.get(i), endpoint, scope));
