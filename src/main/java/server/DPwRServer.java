@@ -26,6 +26,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static server.PlasmaServer.startPlasmaStore;
 import static utils.CommunicationUtils.*;
 import static utils.HashUtils.generateID;
 import static utils.HashUtils.generateNextIdOfId;
@@ -40,7 +41,6 @@ public class DPwRServer {
     private static final int PLASMA_TIMEOUT_MS = 500;
     private final AtomicInteger serverCount = new AtomicInteger(1);
     private final Map<Integer, InetSocketAddress> serverMap = new HashMap<>();
-    private final String plasmaFilePath;
     private final ResourcePool resources = new ResourcePool();
     private final InetSocketAddress listenAddress;
     private final AtomicInteger runningTagID = new AtomicInteger(0);
@@ -54,17 +54,17 @@ public class DPwRServer {
     private WorkerPool workerPool;
     private int serverID = -1;
 
-    public DPwRServer(final String plasmaFilePath, final String listenAddress, final Integer listenPort) {
+    public DPwRServer(final String listenAddress, final Integer listenPort) {
         this.listenAddress = new InetSocketAddress(listenAddress, listenPort);
-        this.plasmaFilePath = plasmaFilePath;
+        startPlasmaStore();
         connectPlasma();
         this.serverID = 0;
         serverMap.put(0, this.listenAddress);
     }
 
-    public DPwRServer(final String plasmaFilePath, final String listenAddress, final Integer listenPort, final String mainServerHostAddress, final Integer mainServerPort) throws ControlException, TimeoutException, ConnectException {
+    public DPwRServer(final String listenAddress, final Integer listenPort, final String mainServerHostAddress, final Integer mainServerPort) throws ControlException, TimeoutException, ConnectException {
         this.listenAddress = new InetSocketAddress(listenAddress, listenPort);
-        this.plasmaFilePath = plasmaFilePath;
+        startPlasmaStore();
         connectPlasma();
         registerServer(new InetSocketAddress(mainServerHostAddress, mainServerPort));
     }
@@ -72,7 +72,7 @@ public class DPwRServer {
     private void connectPlasma() {
         System.loadLibrary("plasma_java");
         try {
-            this.plasmaClient = new PlasmaClient(plasmaFilePath, "", 0);
+            this.plasmaClient = new PlasmaClient(PlasmaServer.getStoreAddress(), "", 0);
         } catch (final Exception e) {
             log.error("PlasmaDB could not be reached");
         }
@@ -199,9 +199,10 @@ public class DPwRServer {
         final Thread cleanUpThread = new Thread(() -> {
             log.warn("Attempting graceful shutdown");
             try {
+                PlasmaServer.cleanup();
+                log.info("Closing Resources");
                 resources.close();
-                log.warn("Success");
-            } catch (final CloseException e) {
+            } catch (final Exception e) {
                 log.error("Exception while cleaning up");
             }
         });
