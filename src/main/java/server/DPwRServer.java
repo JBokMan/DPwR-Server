@@ -10,7 +10,12 @@ import model.PlasmaEntry;
 import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.ObjectUtils;
+import org.apache.commons.lang3.SerializationException;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LoggerContext;
+import org.apache.logging.log4j.core.config.LoggerConfig;
 import utils.DPwRErrorHandler;
 import utils.WorkerPool;
 
@@ -37,8 +42,8 @@ public class DPwRServer {
 
     private static final ErrorHandler errorHandler = new DPwRErrorHandler();
     private static final ContextParameters.Feature[] FEATURE_SET = {ContextParameters.Feature.TAG, ContextParameters.Feature.RMA, ContextParameters.Feature.WAKEUP};
-    private static final int CONNECTION_TIMEOUT_MS = 500;
-    private static final int PLASMA_TIMEOUT_MS = 500;
+    private final int clientTimeout;
+    private final int plasmaTimeout;
     private final AtomicInteger serverCount = new AtomicInteger(1);
     private final Map<Integer, InetSocketAddress> serverMap = new HashMap<>();
     private final ResourcePool resources = new ResourcePool();
@@ -54,19 +59,41 @@ public class DPwRServer {
     private WorkerPool workerPool;
     private int serverID = -1;
 
-    public DPwRServer(final String listenAddress, final Integer listenPort) {
-        this.listenAddress = new InetSocketAddress(listenAddress, listenPort);
-        startPlasmaStore();
+    public DPwRServer(final InetSocketAddress listenAddress, final int plasmaStoreSize, final int plasmaTimeout, final int clientTimeout, final Boolean verbose) {
+        this.listenAddress = listenAddress;
+        this.plasmaTimeout = plasmaTimeout;
+        this.clientTimeout = clientTimeout;
+        if (verbose) {
+            setLogLevel(Level.INFO);
+        } else {
+            setLogLevel(Level.WARN);
+        }
+        startPlasmaStore(plasmaStoreSize);
         connectPlasma();
         this.serverID = 0;
         serverMap.put(0, this.listenAddress);
     }
 
-    public DPwRServer(final String listenAddress, final Integer listenPort, final String mainServerHostAddress, final Integer mainServerPort) throws ControlException, TimeoutException, ConnectException {
-        this.listenAddress = new InetSocketAddress(listenAddress, listenPort);
-        startPlasmaStore();
+    public DPwRServer(final InetSocketAddress listenAddress, final InetSocketAddress mainServerAddress, final int plasmaStoreSize, final int plasmaTimeout, final int clientTimeout, final Boolean verbose) throws ControlException, TimeoutException, ConnectException, SerializationException {
+        this.listenAddress = listenAddress;
+        this.plasmaTimeout = plasmaTimeout;
+        this.clientTimeout = clientTimeout;
+        if (verbose) {
+            setLogLevel(Level.INFO);
+        } else {
+            setLogLevel(Level.WARN);
+        }
+        startPlasmaStore(plasmaStoreSize);
         connectPlasma();
-        registerServer(new InetSocketAddress(mainServerHostAddress, mainServerPort));
+        registerServer(mainServerAddress);
+    }
+
+    private void setLogLevel(final Level level) {
+        final LoggerContext ctx = (LoggerContext) LogManager.getContext(false);
+        final org.apache.logging.log4j.core.config.Configuration config = ctx.getConfiguration();
+        final LoggerConfig loggerConfig = config.getLoggerConfig(LogManager.ROOT_LOGGER_NAME);
+        loggerConfig.setLevel(level);
+        ctx.updateLoggers();
     }
 
     private void connectPlasma() {
@@ -78,7 +105,7 @@ public class DPwRServer {
         }
     }
 
-    private void registerServer(final InetSocketAddress mainServerAddress) throws ControlException, TimeoutException, ConnectException {
+    private void registerServer(final InetSocketAddress mainServerAddress) throws ControlException, TimeoutException, ConnectException, SerializationException {
         try (final ResourcePool resourcePool = new ResourcePool(); final ResourceScope scope = ResourceScope.newConfinedScope()) {
             final ContextParameters contextParameters = new ContextParameters(scope).setFeatures(ContextParameters.Feature.TAG);
             final Context context = Context.initialize(contextParameters, null);
@@ -108,25 +135,25 @@ public class DPwRServer {
         }
     }
 
-    private void registerAtMain(final InetSocketAddress mainServerAddress, final Worker worker, final ResourceScope scope) throws ControlException, TimeoutException, ConnectException {
+    private void registerAtMain(final InetSocketAddress mainServerAddress, final Worker worker, final ResourceScope scope) throws ControlException, TimeoutException, ConnectException, SerializationException {
         log.info("Register at main: {}", mainServerAddress);
 
         final EndpointParameters endpointParams = new EndpointParameters(scope).setRemoteAddress(mainServerAddress).setErrorHandler(errorHandler);
         final Endpoint endpoint = worker.createEndpoint(endpointParams);
 
-        final int tagID = receiveTagID(worker, CONNECTION_TIMEOUT_MS);
-        sendOperationName(tagID, "REG", endpoint, worker, CONNECTION_TIMEOUT_MS);
-        sendAddress(tagID, this.listenAddress, endpoint, worker, CONNECTION_TIMEOUT_MS);
+        final int tagID = receiveTagID(worker, clientTimeout);
+        sendOperationName(tagID, "REG", endpoint, worker, clientTimeout);
+        sendAddress(tagID, this.listenAddress, endpoint, worker, clientTimeout);
 
-        final String statusCode = receiveStatusCode(tagID, worker, CONNECTION_TIMEOUT_MS);
+        final String statusCode = receiveStatusCode(tagID, worker, clientTimeout);
 
         if ("200".equals(statusCode)) {
-            final int serverCount = receiveInteger(tagID, worker, CONNECTION_TIMEOUT_MS);
+            final int serverCount = receiveInteger(tagID, worker, clientTimeout);
             this.serverCount.set(serverCount);
             this.serverID = serverCount - 1;
 
             for (int i = 0; i < serverCount; i++) {
-                final InetSocketAddress serverAddress = receiveAddress(tagID, worker, CONNECTION_TIMEOUT_MS);
+                final InetSocketAddress serverAddress = receiveAddress(tagID, worker, clientTimeout);
                 serverMap.put(i, serverAddress);
             }
             serverMap.put(this.serverID, this.listenAddress);
@@ -146,14 +173,14 @@ public class DPwRServer {
         final EndpointParameters endpointParams = new EndpointParameters(scope).setRemoteAddress(address).setErrorHandler(errorHandler);
         final Endpoint endpoint = worker.createEndpoint(endpointParams);
 
-        final int tagID = receiveTagID(worker, CONNECTION_TIMEOUT_MS);
-        sendOperationName(tagID, "REG", endpoint, worker, CONNECTION_TIMEOUT_MS);
-        sendAddress(tagID, this.listenAddress, endpoint, worker, CONNECTION_TIMEOUT_MS);
+        final int tagID = receiveTagID(worker, clientTimeout);
+        sendOperationName(tagID, "REG", endpoint, worker, clientTimeout);
+        sendAddress(tagID, this.listenAddress, endpoint, worker, clientTimeout);
 
-        final String statusCode = receiveStatusCode(tagID, worker, CONNECTION_TIMEOUT_MS);
+        final String statusCode = receiveStatusCode(tagID, worker, clientTimeout);
 
         if ("206".equals(statusCode)) {
-            sendSingleInteger(tagID, this.serverID, endpoint, worker, CONNECTION_TIMEOUT_MS);
+            sendSingleInteger(tagID, this.serverID, endpoint, worker, clientTimeout);
         } else if ("200".equals(statusCode)) {
             throw new ConnectException("Given address was of the main server and not of the secondary server");
         } else if ("400".equals(statusCode)) {
@@ -246,9 +273,9 @@ public class DPwRServer {
         try {
             // Send tagID to client and increment
             final int tagID = this.runningTagID.getAndIncrement();
-            sendSingleInteger(0, tagID, endpoint, currentWorker, CONNECTION_TIMEOUT_MS);
+            sendSingleInteger(0, tagID, endpoint, currentWorker, clientTimeout);
 
-            final String operationName = receiveOperationName(tagID, currentWorker, CONNECTION_TIMEOUT_MS);
+            final String operationName = receiveOperationName(tagID, currentWorker, clientTimeout);
 
             switch (operationName) {
                 case "PUT" -> putOperation(tagID, currentWorker, endpoint);
@@ -261,79 +288,79 @@ public class DPwRServer {
                 case "INF" -> infOperation(tagID, currentWorker, endpoint);
             }
         } finally {
-            tearDownEndpoint(endpoint, currentWorker, CONNECTION_TIMEOUT_MS);
+            tearDownEndpoint(endpoint, currentWorker, clientTimeout);
             scope.close();
         }
     }
 
     private void putOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException, ControlException, CloseException {
         log.info("Start PUT operation");
-        final String keyToPut = receiveKey(tagID, worker, CONNECTION_TIMEOUT_MS);
+        final String keyToPut = receiveKey(tagID, worker, clientTimeout);
         byte[] id = generateID(keyToPut);
-        final int entrySize = receiveInteger(tagID, worker, CONNECTION_TIMEOUT_MS);
+        final int entrySize = receiveInteger(tagID, worker, clientTimeout);
 
         if (plasmaClient.contains(id)) {
             log.warn("Plasma does contain the id");
-            final PlasmaEntry plasmaEntry = getPlasmaEntry(plasmaClient, id, PLASMA_TIMEOUT_MS);
-            final byte[] objectIdWithFreeNextID = getObjectIdOfNextEntryWithEmptyNextID(plasmaClient, plasmaEntry, id, keyToPut, PLASMA_TIMEOUT_MS);
+            final PlasmaEntry plasmaEntry = getPlasmaEntry(plasmaClient, id, plasmaTimeout);
+            final byte[] objectIdWithFreeNextID = getObjectIdOfNextEntryWithEmptyNextID(plasmaClient, plasmaEntry, id, keyToPut, plasmaTimeout);
 
             if (ArrayUtils.isEmpty(objectIdWithFreeNextID)) {
                 log.warn("Object with key is already in plasma");
-                sendStatusCode(tagID, "409", endpoint, worker, CONNECTION_TIMEOUT_MS);
+                sendStatusCode(tagID, "409", endpoint, worker, clientTimeout);
             } else {
                 log.warn("Key is not in plasma, handling id collision");
                 id = generateNextIdOfId(objectIdWithFreeNextID);
 
-                createEntryAndSendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
-                awaitPutCompletionSignal(tagID, plasmaClient, id, worker, objectIdWithFreeNextID, CONNECTION_TIMEOUT_MS, PLASMA_TIMEOUT_MS);
+                createEntryAndSendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, clientTimeout);
+                awaitPutCompletionSignal(tagID, plasmaClient, id, worker, objectIdWithFreeNextID, clientTimeout, plasmaTimeout);
             }
         } else {
             log.info("Plasma does not contain the id");
-            createEntryAndSendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
-            awaitPutCompletionSignal(tagID, plasmaClient, id, worker, null, CONNECTION_TIMEOUT_MS, PLASMA_TIMEOUT_MS);
+            createEntryAndSendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, clientTimeout);
+            awaitPutCompletionSignal(tagID, plasmaClient, id, worker, null, clientTimeout, plasmaTimeout);
         }
         log.info("PUT operation completed");
     }
 
     private void getOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws ControlException, TimeoutException, CloseException {
         log.info("Start GET operation");
-        final String keyToGet = receiveKey(tagID, worker, CONNECTION_TIMEOUT_MS);
+        final String keyToGet = receiveKey(tagID, worker, clientTimeout);
         final byte[] id = generateID(keyToGet);
 
         ByteBuffer entryBuffer = null;
 
         if (plasmaClient.contains(id)) {
-            entryBuffer = plasmaClient.getObjAsByteBuffer(id, PLASMA_TIMEOUT_MS, false);
+            entryBuffer = plasmaClient.getObjAsByteBuffer(id, plasmaTimeout, false);
             final PlasmaEntry entry = getPlasmaEntryFromBuffer(entryBuffer);
 
             if (!StringUtils.equals(keyToGet, entry.key)) {
                 log.warn("Entry with id: {} has not key: {}", id, keyToGet);
-                entryBuffer = findEntryWithKey(plasmaClient, keyToGet, entryBuffer, PLASMA_TIMEOUT_MS);
+                entryBuffer = findEntryWithKey(plasmaClient, keyToGet, entryBuffer, plasmaTimeout);
             }
         }
 
         if (ObjectUtils.isNotEmpty(entryBuffer)) {
-            sendStatusCode(tagID, "200", endpoint, worker, CONNECTION_TIMEOUT_MS);
-            sendObjectAddress(tagID, entryBuffer, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
+            sendStatusCode(tagID, "200", endpoint, worker, clientTimeout);
+            sendObjectAddress(tagID, entryBuffer, endpoint, worker, context, clientTimeout);
             // Wait for client to signal successful transmission
-            receiveStatusCode(tagID, worker, CONNECTION_TIMEOUT_MS);
+            receiveStatusCode(tagID, worker, clientTimeout);
         } else {
-            sendStatusCode(tagID, "404", endpoint, worker, CONNECTION_TIMEOUT_MS);
+            sendStatusCode(tagID, "404", endpoint, worker, clientTimeout);
         }
         log.info("GET operation completed");
     }
 
     private void deleteOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException, NullPointerException {
         log.info("Start DEL operation");
-        final String keyToDelete = receiveKey(tagID, worker, CONNECTION_TIMEOUT_MS);
+        final String keyToDelete = receiveKey(tagID, worker, clientTimeout);
         final byte[] id = generateID(keyToDelete);
 
         String statusCode = "404";
 
         if (plasmaClient.contains(id)) {
             log.info("Entry with id {} exists", id);
-            final PlasmaEntry entry = getPlasmaEntry(plasmaClient, id, PLASMA_TIMEOUT_MS);
-            statusCode = findAndDeleteEntryWithKey(plasmaClient, keyToDelete, entry, id, new byte[20], PLASMA_TIMEOUT_MS);
+            final PlasmaEntry entry = getPlasmaEntry(plasmaClient, id, plasmaTimeout);
+            statusCode = findAndDeleteEntryWithKey(plasmaClient, keyToDelete, entry, id, new byte[20], plasmaTimeout);
         }
 
         if ("204".equals(statusCode)) {
@@ -341,35 +368,35 @@ public class DPwRServer {
         } else {
             log.warn("Object with key \"{}\" was not found in plasma store", keyToDelete);
         }
-        sendStatusCode(tagID, statusCode, endpoint, worker, CONNECTION_TIMEOUT_MS);
+        sendStatusCode(tagID, statusCode, endpoint, worker, clientTimeout);
         log.info("DEL operation completed");
     }
 
     private void containsOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException {
         log.info("Start CNT operation");
-        final String keyToGet = receiveKey(tagID, worker, CONNECTION_TIMEOUT_MS);
+        final String keyToGet = receiveKey(tagID, worker, clientTimeout);
         final byte[] id = generateID(keyToGet);
 
         if (plasmaClient.contains(id)) {
-            sendStatusCode(tagID, "200", endpoint, worker, CONNECTION_TIMEOUT_MS);
+            sendStatusCode(tagID, "200", endpoint, worker, clientTimeout);
         } else {
-            sendStatusCode(tagID, "404", endpoint, worker, CONNECTION_TIMEOUT_MS);
+            sendStatusCode(tagID, "404", endpoint, worker, clientTimeout);
         }
         log.info("CNT operation completed");
     }
 
     private void hashOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException {
         log.info("Start HSH operation");
-        final String keyToGet = receiveKey(tagID, worker, CONNECTION_TIMEOUT_MS);
+        final String keyToGet = receiveKey(tagID, worker, clientTimeout);
         final byte[] id = generateID(keyToGet);
 
         final byte[] hash = plasmaClient.hash(id);
 
         if (ObjectUtils.isEmpty(hash)) {
-            sendStatusCode(tagID, "404", endpoint, worker, CONNECTION_TIMEOUT_MS);
+            sendStatusCode(tagID, "404", endpoint, worker, clientTimeout);
         } else {
-            sendStatusCode(tagID, "200", endpoint, worker, CONNECTION_TIMEOUT_MS);
-            sendHash(tagID, hash, endpoint, worker, CONNECTION_TIMEOUT_MS);
+            sendStatusCode(tagID, "200", endpoint, worker, clientTimeout);
+            sendHash(tagID, hash, endpoint, worker, clientTimeout);
         }
         log.info("HSH operation completed");
     }
@@ -378,43 +405,45 @@ public class DPwRServer {
         log.info("Start LST operation");
 
         final List<byte[]> entries = plasmaClient.list();
-        sendSingleInteger(tagID, entries.size(), endpoint, worker, CONNECTION_TIMEOUT_MS);
+        sendSingleInteger(tagID, entries.size(), endpoint, worker, clientTimeout);
         for (final byte[] entry : entries) {
-            sendObjectAddress(tagID, entry, endpoint, worker, context, CONNECTION_TIMEOUT_MS);
+            sendObjectAddress(tagID, entry, endpoint, worker, context, clientTimeout);
             // Wait for client to signal successful transmission
-            receiveStatusCode(tagID, worker, CONNECTION_TIMEOUT_MS);
+            receiveStatusCode(tagID, worker, clientTimeout);
         }
         log.info("LST operation completed");
     }
 
     private void regOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException {
         log.info("Start REG operation");
-        final InetSocketAddress newServerAddress = receiveAddress(tagID, worker, CONNECTION_TIMEOUT_MS);
+        final InetSocketAddress newServerAddress = receiveAddress(tagID, worker, clientTimeout);
 
         if (this.serverMap.containsValue(newServerAddress)) {
-            sendStatusCode(tagID, "400", endpoint, worker, CONNECTION_TIMEOUT_MS);
+            sendStatusCode(tagID, "400", endpoint, worker, clientTimeout);
             return;
         }
 
         if (this.serverID == 0) {
             log.info("This is the main server");
             final int currentServerCount = this.serverCount.incrementAndGet();
-            sendServerMap(tagID, this.serverMap, worker, endpoint, currentServerCount, CONNECTION_TIMEOUT_MS);
+            sendStatusCode(tagID, "200", endpoint, worker, clientTimeout);
+            sendServerMap(tagID, this.serverMap, worker, endpoint, currentServerCount, clientTimeout);
             this.serverMap.put(currentServerCount - 1, newServerAddress);
         } else {
             log.info("This is a secondary server");
-            sendStatusCode(tagID, "206", endpoint, worker, CONNECTION_TIMEOUT_MS);
-            final int serverID = receiveInteger(tagID, worker, CONNECTION_TIMEOUT_MS);
+            sendStatusCode(tagID, "206", endpoint, worker, clientTimeout);
+            final int serverID = receiveInteger(tagID, worker, clientTimeout);
             this.serverMap.put(serverID, newServerAddress);
             this.serverCount.incrementAndGet();
         }
+        log.info(serverMap.entrySet().toString());
         log.info("REG operation completed");
     }
 
     private void infOperation(final int tagID, final Worker currentWorker, final Endpoint endpoint) throws TimeoutException {
         log.info("Start INF operation");
         final int currentServerCount = this.serverCount.get();
-        sendServerMap(tagID, this.serverMap, currentWorker, endpoint, currentServerCount, CONNECTION_TIMEOUT_MS);
+        sendServerMap(tagID, this.serverMap, currentWorker, endpoint, currentServerCount, clientTimeout);
         log.info("REG operation completed");
     }
 }
