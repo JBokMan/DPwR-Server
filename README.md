@@ -11,6 +11,7 @@
 1. install the latest version
    of [CMake](https://askubuntu.com/questions/355565/how-do-i-install-the-latest-version-of-cmake-from-the-command-line)
 2. run ```sudo apt install python3-numpy```
+3. run ```sudo apt-get install build-essential; sudo apt-get install curl; sudo apt-get install zip; sudo apt-get install openjdk-17-jdk; sudo apt-get install default-jdk; sudo apt-get install python3-dev```
 3. clone Apache Arrow from [GitHub](https://github.com/apache/arrow)
 4. run  ```cd arrow/cpp; mkdir release; cd release```
 5. find and open the file *arrow/java/plasma/test.sh*
