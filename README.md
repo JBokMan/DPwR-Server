@@ -4,19 +4,20 @@
 
 ### Install Java Panama
 - Install sdk-man
-1. curl -s "https://get.sdkman.io" | bash
-2. source "$HOME/.sdkman/bin/sdkman-init.sh"
+1. ```curl -s "https://get.sdkman.io" | bash```
+2. ```source "$HOME/.sdkman/bin/sdkman-init.sh"```
 - Download panama installer from https://coconucos.cs.hhu.de/forschung/jdk/install and install java
-3. bash panama-install.sh
+3. ```bash panama-install.sh```
+4. ```sdk use java panama```
 
 ### Install Python
-1. curl https://pyenv.run | bash
-2. pyenv install 3.8.3
+1. ```curl https://pyenv.run | bash```
+2. ```pyenv install 3.8.3```
 - Download pip bootstrap from https://bootstrap.pypa.io/get-pip.py and install pip
-3. python3 get-pip.py
+3. ```python3 get-pip.py```
 
 ### Install Plasma server
-pip install pyarrow==8.0.*
+```pip install pyarrow==8.0.*```
 
 ### Install UCX
 Install UCX from https://github.com/openucx/ucx/releases/tag/v1.12.1
