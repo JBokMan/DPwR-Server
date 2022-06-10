@@ -2,6 +2,10 @@
 
 ## Prerequisites:
 
+### Pull Submodules
+After cloning the repository the submodules must also be pulled
+```git submodule update --init --recursive```
+
 ### Install Java Panama
 - Install sdk-man
 1. ```curl -s "https://get.sdkman.io" | bash```
@@ -58,7 +62,7 @@ Install UCX from https://github.com/openucx/ucx/releases/tag/v1.12.1
 ## How to run the server
 After cloning the repository run in the project folder:
 
-```./gradlew shadowJar; export UCX_ERROR_SIGNALS=""; java --add-modules jdk.incubator.foreign --enable-native-access=ALL-UNNAMED -cp "build/libs/InfinimumDB-Server-1.0-SNAPSHOT-all.jar:application.jar" main.Application```
+```./gradlew shadowJar; export UCX_ERROR_SIGNALS=""; java --add-modules jdk.incubator.foreign --enable-native-access=ALL-UNNAMED -cp "build/libs/DPwR-Server-1.0-SNAPSHOT-all.jar:application.jar" main.Application```
 
 ## How to gracefully shut down the server
 
@@ -66,6 +70,45 @@ After cloning the repository run in the project folder:
 2. Run ```kill -s TERM <PID>``` where \<PID\> should be replaced with the correct PID
 
 ## Known Bugs/Problems:
+
+### Gradle File Not Found
+Exception in thread "main" java.io.FileNotFoundException: https://downloads.gradle-dn.com/distributions-snapshots/gradle-7.5-20220113232546+0000-bin.zip
+
+Solution
+Download gradle nightly from https://gradle.org/nightly/
+
+### Gradle unsupported class file major version
+BUG! exception in phase 'semantic analysis' in source unit '_BuildScript_' Unsupported class file major version 63
+
+Solution
+```sdk install java 17.0.3.6.1-amzn```
+```sdk use java 17.0.3.6.1-amzn```
+For building java 17 is required but for running java 19 is required so after building run ```sdk use java panama```
+
+### LibLLVM not found
+Exception in thread "main" java.lang.UnsatisfiedLinkError: /home/julian/.sdkman/candidates/java/panama/lib/libclang.so: libLLVM-11.so.1: cannot open shared object file: No such file or directory
+
+Solution
+```sudo apt-get install llvm-11```
+
+### UCX not installed
+fatal error: 'uct/api/uct.h' file not found
+
+Solution
+install ucx follow the prerequisits
+
+### Linkage error class file versions
+Error: LinkageError occurred while loading main class main.Application
+	java.lang.UnsupportedClassVersionError: main/Application has been compiled by a more recent version of the Java Runtime (class file version 63.0), this version of the Java Runtime only recognizes class file versions up to 61.0
+
+Solution
+```sdk use java panama```
+
+### Plasma store not installed
+11:26:50.612 ERROR server.PlasmaServer.startProcess() @45 - Cannot run program "plasma_store": error=2, No such file or directory
+
+Solution
+```pip install pyarrow==8.0.*```
 
 ### Could NOT find Python3
 Following error message appears when running cmake to install Apache Arrow JNI:
