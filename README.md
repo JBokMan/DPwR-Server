@@ -55,7 +55,6 @@ Install UCX from https://github.com/openucx/ucx/releases/tag/v1.12.1
 
 6. run ```sudo make VERBOSE=1 -j$(nproc)```
 7. run ```sudo make install```
-8. run ```sudo cp -a release/. /usr/lib```
 
 ## How to run the server
 After cloning the repository run:
