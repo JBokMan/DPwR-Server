@@ -31,7 +31,7 @@ Install UCX from https://github.com/openucx/ucx/releases/tag/v1.12.1
 1. install the latest version for development
    of [CMake](https://askubuntu.com/questions/355565/how-do-i-install-the-latest-version-of-cmake-from-the-command-line)
 2. run ```sudo apt-get install build-essential; sudo apt-get install openjdk-17-jdk; sudo apt-get install default-jdk```
-3. clone Apache Arrow from [GitHub](https://github.com/apache/arrow)
+3. clone [Apache Arrow](https://github.com/apache/arrow) from GitHub
 4. run  ```cd arrow/cpp; mkdir release; cd release```
 5. run
    ```bash
@@ -53,7 +53,7 @@ Install UCX from https://github.com/openucx/ucx/releases/tag/v1.12.1
    -DARROW_PLASMA_JAVA_CLIENT=on \
    ..
 
-6. run ```sudo make VERBOSE=1 -j$(nproc)
+6. run ```sudo make VERBOSE=1 -j$(nproc)```
 7. run ```sudo make install```
 8. run ```sudo cp -a release/. /usr/lib```
 
