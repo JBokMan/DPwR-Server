@@ -28,26 +28,23 @@ Install UCX from https://github.com/openucx/ucx/releases/tag/v1.12.1
 
 ### Install **Apache Arrow JNI** with make:
 
-1. install the latest version
+1. install the latest version for development
    of [CMake](https://askubuntu.com/questions/355565/how-do-i-install-the-latest-version-of-cmake-from-the-command-line)
-2. run ```sudo apt install python3-numpy```
-3. run ```sudo apt-get install build-essential; sudo apt-get install curl; sudo apt-get install zip; sudo apt-get install openjdk-17-jdk; sudo apt-get install default-jdk; sudo apt-get install python3-dev; sudo apt-get install python3-numpy```
-4. clone Apache Arrow from [GitHub](https://github.com/apache/arrow)
-5. run  ```cd arrow/cpp; mkdir release; cd release```
-6. find and open the file *arrow/java/plasma/test.sh*
-   - copy the options of the *cmake* found in the test.sh file command
-7. run ```sudo cmake ``` followed by the copied options
-   - full command should look something like this: 
+2. run ```sudo apt-get install build-essential; sudo apt-get install openjdk-17-jdk; sudo apt-get install default-jdk```
+3. clone Apache Arrow from [GitHub](https://github.com/apache/arrow)
+4. run  ```cd arrow/cpp; mkdir release; cd release```
+5. run
    ```bash
-   sudo cmake -DCMAKE_BUILD_TYPE=Release \
+   sudo cmake \ 
+   -DCMAKE_BUILD_TYPE=Release \
    -DCMAKE_C_FLAGS="-g -O3" \
    -DCMAKE_CXX_FLAGS="-g -O3" \
    -DARROW_BUILD_TESTS=off \
-   -DARROW_HDFS=on \
-   -DARROW_BOOST_USE_SHARED=on \
-   -DARROW_PYTHON=on \
+   -DARROW_HDFS=off \
+   -DARROW_BOOST_USE_SHARED=off \
+   -DARROW_PYTHON=off \
    -DARROW_PLASMA=on \
-   -DPLASMA_PYTHON=on \
+   -DPLASMA_PYTHON=off \
    -DARROW_JEMALLOC=off \
    -DARROW_WITH_BROTLI=off \
    -DARROW_WITH_LZ4=off \
@@ -56,15 +53,22 @@ Install UCX from https://github.com/openucx/ucx/releases/tag/v1.12.1
    -DARROW_PLASMA_JAVA_CLIENT=on \
    ..
 
-9. run ```sudo make VERBOSE=1 -j4; sudo make install```
-10. run ```sudo cp -a release/. /usr/lib```
+6. run ```sudo make VERBOSE=1 -j$(nproc)
+7. run ```sudo make install```
+8. run ```sudo cp -a release/. /usr/lib```
 
 ## How to run the server
-After cloning the repository run in the project folder:
+After cloning the repository run:
 
-```./gradlew shadowJar; export UCX_ERROR_SIGNALS=""; java --add-modules jdk.incubator.foreign --enable-native-access=ALL-UNNAMED -cp "build/libs/DPwR-Server-1.0-SNAPSHOT-all.jar:application.jar" main.Application```
+1. ```./gradlew shadowJar
+2. ``` export UCX_ERROR_SIGNALS=""```
+3. ``` java --add-modules jdk.incubator.foreign --enable-native-access=ALL-UNNAMED -cp "build/libs/DPwR-Server-1.0-SNAPSHOT-all.jar:application.jar" main.Application --verbose```
 
 ## How to gracefully shut down the server
+
+1. STRG + C
+
+Or
 
 1. Find the PID with for example ```ps -A | grep java```
 2. Run ```kill -s TERM <PID>``` where \<PID\> should be replaced with the correct PID
@@ -116,7 +120,11 @@ Following error message appears when running cmake to install Apache Arrow JNI:
 ```bash
 CMake Error at /usr/share/cmake-3.18/Modules/FindPackageHandleStandardArgs.cmake:165 (message): Could NOT find Python3 (missing: Python3_NumPy_INCLUDE_DIRS NumPy) (found version "3.9.7")
 ```
-**Solution:** run ```sudo apt-get install python3-numpy```
+**Solution1:** run ```sudo apt-get install python3-numpy```
+
+**Solution2:** run ```sudo apt-get install python3-dev```
+
+**Solution3:** run build with only ARROW_PLASMA and ARROW_PLASMA_JAVA_CLIENT enabled
 
 ### No plasma_java in java.library.path
 Following error message appears when starting a server:
