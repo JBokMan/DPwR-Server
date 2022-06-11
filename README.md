@@ -59,7 +59,7 @@ Install UCX from https://github.com/openucx/ucx/releases/tag/v1.12.1
 ## How to run the server
 After cloning the repository run:
 
-1. ```./gradlew shadowJar
+1. ```./gradlew shadowJar```
 2. ``` export UCX_ERROR_SIGNALS=""```
 3. ``` java --add-modules jdk.incubator.foreign --enable-native-access=ALL-UNNAMED -cp "build/libs/DPwR-Server-1.0-SNAPSHOT-all.jar:application.jar" main.Application --verbose```
 
