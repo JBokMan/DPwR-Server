@@ -1,12 +1,11 @@
 package main;
 
-import de.hhu.bsinfo.infinileap.example.util.Constants;
-import de.hhu.bsinfo.infinileap.example.util.InetSocketAddressConverter;
 import org.apache.commons.lang3.ObjectUtils;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import server.DPwRServer;
+import utils.InetSocketAddressConverter;
 
 import java.net.InetSocketAddress;
 import java.util.concurrent.Callable;
@@ -33,7 +32,7 @@ public class Application implements Callable<Integer> {
 
     public static void main(final String[] args) {
         final int exitCode = new CommandLine(new Application())
-                .registerConverter(InetSocketAddress.class, new InetSocketAddressConverter(Constants.DEFAULT_PORT))
+                .registerConverter(InetSocketAddress.class, new InetSocketAddressConverter(2998))
                 .execute(args);
         System.exit(exitCode);
     }

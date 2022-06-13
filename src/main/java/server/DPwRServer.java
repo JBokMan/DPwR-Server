@@ -1,8 +1,21 @@
 package server;
 
-import de.hhu.bsinfo.infinileap.binding.*;
-import de.hhu.bsinfo.infinileap.example.util.Requests;
+import de.hhu.bsinfo.infinileap.binding.ConnectionHandler;
+import de.hhu.bsinfo.infinileap.binding.ConnectionRequest;
+import de.hhu.bsinfo.infinileap.binding.Context;
+import de.hhu.bsinfo.infinileap.binding.ContextParameters;
+import de.hhu.bsinfo.infinileap.binding.ControlException;
+import de.hhu.bsinfo.infinileap.binding.Endpoint;
+import de.hhu.bsinfo.infinileap.binding.EndpointParameters;
+import de.hhu.bsinfo.infinileap.binding.ErrorHandler;
+import de.hhu.bsinfo.infinileap.binding.ListenerParameters;
+import de.hhu.bsinfo.infinileap.binding.NativeLogger;
+import de.hhu.bsinfo.infinileap.binding.ThreadMode;
+import de.hhu.bsinfo.infinileap.binding.Worker;
+import de.hhu.bsinfo.infinileap.binding.WorkerParameters;
+import de.hhu.bsinfo.infinileap.binding.WorkerProgress;
 import de.hhu.bsinfo.infinileap.util.CloseException;
+import de.hhu.bsinfo.infinileap.util.Requests;
 import de.hhu.bsinfo.infinileap.util.ResourcePool;
 import jdk.incubator.foreign.ResourceScope;
 import lombok.extern.slf4j.Slf4j;
@@ -25,6 +38,7 @@ import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -253,7 +267,12 @@ public class DPwRServer {
         final LinkedBlockingQueue<ConnectionRequest> connectionQueue = new LinkedBlockingQueue<>();
 
         log.info("Listening for new connection requests on {}", listenAddress);
-        this.listenerParameters = new ListenerParameters().setListenAddress(listenAddress).setConnectionHandler(connectionQueue::add);
+        this.listenerParameters = new ListenerParameters().setListenAddress(listenAddress).setConnectionHandler(new ConnectionHandler() {
+            @Override
+            protected void onConnection(final ConnectionRequest request) {
+                connectionQueue.add(request);
+            }
+        });
         pushResource(this.worker.createListener(this.listenerParameters));
 
         while (true) {

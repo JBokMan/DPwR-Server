@@ -1,7 +1,14 @@
 package utils;
 
-import de.hhu.bsinfo.infinileap.binding.*;
-import de.hhu.bsinfo.infinileap.example.util.Requests;
+import de.hhu.bsinfo.infinileap.binding.Context;
+import de.hhu.bsinfo.infinileap.binding.ControlException;
+import de.hhu.bsinfo.infinileap.binding.Endpoint;
+import de.hhu.bsinfo.infinileap.binding.MemoryDescriptor;
+import de.hhu.bsinfo.infinileap.binding.MemoryRegion;
+import de.hhu.bsinfo.infinileap.binding.RequestParameters;
+import de.hhu.bsinfo.infinileap.binding.Tag;
+import de.hhu.bsinfo.infinileap.binding.Worker;
+import de.hhu.bsinfo.infinileap.util.Requests;
 import de.hhu.bsinfo.infinileap.util.CloseException;
 import jdk.incubator.foreign.MemorySegment;
 import jdk.incubator.foreign.ResourceScope;
@@ -19,9 +26,9 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import static de.hhu.bsinfo.infinileap.example.util.Requests.State.COMPLETE;
-import static de.hhu.bsinfo.infinileap.example.util.Requests.State.ERROR;
-import static de.hhu.bsinfo.infinileap.example.util.Requests.state;
+import static de.hhu.bsinfo.infinileap.util.Requests.State.COMPLETE;
+import static de.hhu.bsinfo.infinileap.util.Requests.State.ERROR;
+import static de.hhu.bsinfo.infinileap.util.Requests.state;
 import static org.apache.commons.lang3.SerializationUtils.deserialize;
 import static org.apache.commons.lang3.SerializationUtils.serialize;
 import static utils.PlasmaUtils.deleteById;
