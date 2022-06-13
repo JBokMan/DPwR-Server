@@ -13,7 +13,6 @@ import de.hhu.bsinfo.infinileap.binding.NativeLogger;
 import de.hhu.bsinfo.infinileap.binding.ThreadMode;
 import de.hhu.bsinfo.infinileap.binding.Worker;
 import de.hhu.bsinfo.infinileap.binding.WorkerParameters;
-import de.hhu.bsinfo.infinileap.binding.WorkerProgress;
 import de.hhu.bsinfo.infinileap.util.CloseException;
 import de.hhu.bsinfo.infinileap.util.Requests;
 import de.hhu.bsinfo.infinileap.util.ResourcePool;
@@ -38,7 +37,6 @@ import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Queue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -46,22 +44,40 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static server.PlasmaServer.startPlasmaStore;
-import static utils.CommunicationUtils.*;
+import static utils.CommunicationUtils.awaitPutCompletionSignal;
+import static utils.CommunicationUtils.createEntryAndSendNewEntryAddress;
+import static utils.CommunicationUtils.receiveAddress;
+import static utils.CommunicationUtils.receiveInteger;
+import static utils.CommunicationUtils.receiveKey;
+import static utils.CommunicationUtils.receiveOperationName;
+import static utils.CommunicationUtils.receiveStatusCode;
+import static utils.CommunicationUtils.receiveTagID;
+import static utils.CommunicationUtils.sendAddress;
+import static utils.CommunicationUtils.sendHash;
+import static utils.CommunicationUtils.sendObjectAddress;
+import static utils.CommunicationUtils.sendOperationName;
+import static utils.CommunicationUtils.sendServerMap;
+import static utils.CommunicationUtils.sendSingleInteger;
+import static utils.CommunicationUtils.sendStatusCode;
+import static utils.CommunicationUtils.tearDownEndpoint;
 import static utils.HashUtils.generateID;
 import static utils.HashUtils.generateNextIdOfId;
-import static utils.PlasmaUtils.*;
+import static utils.PlasmaUtils.findAndDeleteEntryWithKey;
+import static utils.PlasmaUtils.findEntryWithKey;
+import static utils.PlasmaUtils.getObjectIdOfNextEntryWithEmptyNextID;
+import static utils.PlasmaUtils.getPlasmaEntry;
+import static utils.PlasmaUtils.getPlasmaEntryFromBuffer;
 
 @Slf4j
 public class DPwRServer {
 
+    private static final ErrorHandler errorHandler = new DPwRErrorHandler();
+    private static final ContextParameters.Feature[] FEATURE_SET = {ContextParameters.Feature.TAG, ContextParameters.Feature.RMA, ContextParameters.Feature.WAKEUP};
     private final InetSocketAddress listenAddress;
     private final int plasmaTimeout;
     private final int clientTimeout;
     private final int workerCount;
     private final int threadCount;
-    private static final ErrorHandler errorHandler = new DPwRErrorHandler();
-    private static final ContextParameters.Feature[] FEATURE_SET = {ContextParameters.Feature.TAG, ContextParameters.Feature.RMA, ContextParameters.Feature.WAKEUP};
-
     private final AtomicInteger serverCount = new AtomicInteger(1);
     private final Map<Integer, InetSocketAddress> serverMap = new HashMap<>();
     private final ResourcePool resources = new ResourcePool();
