@@ -101,7 +101,7 @@ public class DPwRServer {
         if (verbose) {
             setLogLevel(Level.INFO);
         } else {
-            setLogLevel(Level.WARN);
+            setLogLevel(Level.OFF);
         }
         startPlasmaStore(plasmaStoreSize);
         connectPlasma();
