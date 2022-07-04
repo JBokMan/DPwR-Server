@@ -113,7 +113,7 @@ public class PlasmaUtils {
                 if (!Arrays.equals(previousID, new byte[20])) {
                     updateNextIdOfEntry(plasmaClient, previousID, new byte[20], plasmaTimeoutMs);
                 }
-                return "204";
+                return "221";
             }
         } else {
             log.info("Keys do not match");
@@ -123,7 +123,7 @@ public class PlasmaUtils {
                 return findAndDeleteEntryWithKey(plasmaClient, keyToDelete, nextEntry, nextID, startID, plasmaTimeoutMs);
             } else {
                 log.info("Entry with next id {} does not exist", nextID);
-                return "404";
+                return "421";
             }
         }
     }

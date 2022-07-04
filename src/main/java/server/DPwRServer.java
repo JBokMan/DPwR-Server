@@ -297,41 +297,55 @@ public class DPwRServer {
                 final ConnectionRequest request = connectionQueue.remove();
                 final Worker currentWorker = this.workerPool.getNextWorker();
                 executorService.submit(() -> {
-                    try {
-                        handleRequest(request, currentWorker);
-                    } catch (final ControlException | CloseException | TimeoutException e) {
+                    Endpoint currentEndpoint = null;
+                    try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
+                        final int currentTagID = this.runningTagID.getAndIncrement();
+                        currentEndpoint = establishConnection(request, currentWorker, currentTagID, scope);
+                        handleRequestLoop(currentWorker, currentEndpoint, currentTagID);
+                    } catch (final Exception e) {
                         log.error(e.getMessage());
+                    } finally {
+                        if (ObjectUtils.isNotEmpty(currentEndpoint)) {
+                            tearDownEndpoint(currentEndpoint, currentWorker, clientTimeout);
+                        }
                     }
                 });
             }
         }
     }
 
-    @SuppressWarnings("TryFinallyCanBeTryWithResources")
-    private void handleRequest(final ConnectionRequest request, final Worker currentWorker) throws ControlException, CloseException, TimeoutException {
-        log.info("Handle request");
-        final ResourceScope scope = ResourceScope.newConfinedScope();
+    private Endpoint establishConnection(final ConnectionRequest request, final Worker currentWorker, final int currentTagID, final ResourceScope scope) throws ControlException, TimeoutException {
+        log.info("Establish connection");
         final Endpoint endpoint = currentWorker.createEndpoint(new EndpointParameters(scope).setConnectionRequest(request).setErrorHandler(errorHandler));
-        try {
-            // Send tagID to client and increment
-            final int tagID = this.runningTagID.getAndIncrement();
-            sendSingleInteger(0, tagID, endpoint, currentWorker, clientTimeout);
+        sendSingleInteger(0, currentTagID, endpoint, currentWorker, clientTimeout);
+        return endpoint;
+    }
 
-            final String operationName = receiveOperationName(tagID, currentWorker, clientTimeout);
-
-            switch (operationName) {
-                case "PUT" -> putOperation(tagID, currentWorker, endpoint);
-                case "GET" -> getOperation(tagID, currentWorker, endpoint);
-                case "DEL" -> deleteOperation(tagID, currentWorker, endpoint);
-                case "CNT" -> containsOperation(tagID, currentWorker, endpoint);
-                case "HSH" -> hashOperation(tagID, currentWorker, endpoint);
-                case "LST" -> listOperation(tagID, currentWorker, endpoint);
-                case "REG" -> regOperation(tagID, currentWorker, endpoint);
-                case "INF" -> infOperation(tagID, currentWorker, endpoint);
+    private void handleRequestLoop(final Worker worker, final Endpoint endpoint, final int tagID) throws ControlException, CloseException, TimeoutException {
+        handleLoop:
+        while (true) {
+            worker.await();
+            String operationName;
+            try {
+                operationName = receiveOperationName(tagID, worker, clientTimeout);
+            } catch (final Exception e) {
+                log.error(e.getMessage());
+                operationName = "";
             }
-        } finally {
-            tearDownEndpoint(endpoint, currentWorker, clientTimeout);
-            scope.close();
+            switch (operationName) {
+                case "PUT" -> putOperation(tagID, worker, endpoint);
+                case "GET" -> getOperation(tagID, worker, endpoint);
+                case "DEL" -> deleteOperation(tagID, worker, endpoint);
+                case "CNT" -> containsOperation(tagID, worker, endpoint);
+                case "HSH" -> hashOperation(tagID, worker, endpoint);
+                case "LST" -> listOperation(tagID, worker, endpoint);
+                case "REG" -> regOperation(tagID, worker, endpoint);
+                case "INF" -> infOperation(tagID, worker, endpoint);
+                case "BYE" -> {
+                    sendStatusCode(tagID, "BYE", endpoint, worker, clientTimeout);
+                    break handleLoop;
+                }
+            }
         }
     }
 
@@ -340,6 +354,7 @@ public class DPwRServer {
         final String keyToPut = receiveKey(tagID, worker, clientTimeout);
         byte[] id = generateID(keyToPut);
         final int entrySize = receiveInteger(tagID, worker, clientTimeout);
+        final String statusCode;
 
         if (plasmaClient.contains(id)) {
             log.warn("Plasma does contain the id");
@@ -348,19 +363,20 @@ public class DPwRServer {
 
             if (ArrayUtils.isEmpty(objectIdWithFreeNextID)) {
                 log.warn("Object with key is already in plasma");
-                sendStatusCode(tagID, "409", endpoint, worker, clientTimeout);
+                statusCode = "400";
             } else {
                 log.warn("Key is not in plasma, handling id collision");
                 id = generateNextIdOfId(objectIdWithFreeNextID);
 
                 createEntryAndSendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, clientTimeout);
-                awaitPutCompletionSignal(tagID, plasmaClient, id, worker, objectIdWithFreeNextID, clientTimeout, plasmaTimeout);
+                statusCode = awaitPutCompletionSignal(tagID, plasmaClient, id, worker, objectIdWithFreeNextID, clientTimeout, plasmaTimeout);
             }
         } else {
             log.info("Plasma does not contain the id");
             createEntryAndSendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, clientTimeout);
-            awaitPutCompletionSignal(tagID, plasmaClient, id, worker, null, clientTimeout, plasmaTimeout);
+            statusCode = awaitPutCompletionSignal(tagID, plasmaClient, id, worker, null, clientTimeout, plasmaTimeout);
         }
+        sendStatusCode(tagID, statusCode, endpoint, worker, clientTimeout);
         log.info("PUT operation completed");
     }
 
@@ -382,12 +398,17 @@ public class DPwRServer {
         }
 
         if (ObjectUtils.isNotEmpty(entryBuffer)) {
-            sendStatusCode(tagID, "200", endpoint, worker, clientTimeout);
+            sendStatusCode(tagID, "211", endpoint, worker, clientTimeout);
             sendObjectAddress(tagID, entryBuffer, endpoint, worker, context, clientTimeout);
             // Wait for client to signal successful transmission
-            receiveStatusCode(tagID, worker, clientTimeout);
+            final String statusCode = receiveStatusCode(tagID, worker, clientTimeout);
+            if ("212".equals(statusCode)) {
+                sendStatusCode(tagID, "213", endpoint, worker, clientTimeout);
+            } else {
+                sendStatusCode(tagID, "412", endpoint, worker, clientTimeout);
+            }
         } else {
-            sendStatusCode(tagID, "404", endpoint, worker, clientTimeout);
+            sendStatusCode(tagID, "411", endpoint, worker, clientTimeout);
         }
         log.info("GET operation completed");
     }
@@ -397,7 +418,7 @@ public class DPwRServer {
         final String keyToDelete = receiveKey(tagID, worker, clientTimeout);
         final byte[] id = generateID(keyToDelete);
 
-        String statusCode = "404";
+        String statusCode = "421";
 
         if (plasmaClient.contains(id)) {
             log.info("Entry with id {} exists", id);
@@ -405,7 +426,7 @@ public class DPwRServer {
             statusCode = findAndDeleteEntryWithKey(plasmaClient, keyToDelete, entry, id, new byte[20], plasmaTimeout);
         }
 
-        if ("204".equals(statusCode)) {
+        if ("221".equals(statusCode)) {
             log.info("Object with key \"{}\" found and deleted", keyToDelete);
         } else {
             log.warn("Object with key \"{}\" was not found in plasma store", keyToDelete);
@@ -486,6 +507,6 @@ public class DPwRServer {
         log.info("Start INF operation");
         final int currentServerCount = this.serverCount.get();
         sendServerMap(tagID, this.serverMap, currentWorker, endpoint, currentServerCount, clientTimeout);
-        log.info("REG operation completed");
+        log.info("INF operation completed");
     }
 }

@@ -101,6 +101,7 @@ public class CommunicationUtils {
             }
         }
         if (timeoutHappened) {
+            log.error("A timeout occurred while sending data");
             throw new TimeoutException("A timeout occurred while sending data");
         }
     }
@@ -269,26 +270,32 @@ public class CommunicationUtils {
         return operationName;
     }
 
-    public static void awaitPutCompletionSignal(final int tagID, final PlasmaClient plasmaClient, final byte[] id, final Worker worker, final byte[] idToUpdate, final int timeoutMs, final int plasmaTimeoutMs) throws TimeoutException, SerializationException {
-        final String statusCode;
+    public static String awaitPutCompletionSignal(final int tagID, final PlasmaClient plasmaClient, final byte[] id, final Worker worker, final byte[] idToUpdate, final int timeoutMs, final int plasmaTimeoutMs) throws TimeoutException, SerializationException {
+        final String receivedStatusCode;
         try {
-            statusCode = receiveStatusCode(tagID, worker, timeoutMs);
+            receivedStatusCode = receiveStatusCode(tagID, worker, timeoutMs);
         } catch (final TimeoutException | SerializationException e) {
             plasmaClient.seal(id);
             deleteById(plasmaClient, id);
-            throw e;
+            return "401";
         }
-        if ("200".equals(statusCode)) {
+        if ("201".equals(receivedStatusCode)) {
             plasmaClient.seal(id);
             if (ObjectUtils.isNotEmpty(idToUpdate)) {
                 updateNextIdOfEntry(plasmaClient, idToUpdate, id, plasmaTimeoutMs);
             }
+            return "202";
+        } else {
+            log.error("Wrong status code: " + receivedStatusCode + " deleting entry.");
+            deleteById(plasmaClient, id);
+            return "402";
         }
     }
 
     public static void tearDownEndpoint(final Endpoint endpoint, final Worker worker, final int timeoutMs) {
         try {
             final ArrayList<Long> requests = new ArrayList<>();
+            requests.add(endpoint.flush());
             requests.add(endpoint.closeNonBlocking());
             awaitRequests(requests, worker, timeoutMs);
         } catch (final TimeoutException e) {
