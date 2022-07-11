@@ -287,6 +287,7 @@ public class CommunicationUtils {
             return "202";
         } else {
             log.error("Wrong status code: " + receivedStatusCode + " deleting entry.");
+            plasmaClient.seal(id);
             deleteById(plasmaClient, id);
             return "402";
         }
