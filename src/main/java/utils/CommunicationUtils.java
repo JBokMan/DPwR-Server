@@ -37,8 +37,6 @@ import static utils.PlasmaUtils.updateNextIdOfEntry;
 @Slf4j
 public class CommunicationUtils {
 
-    final private static TimeUnit timeUnit = TimeUnit.MILLISECONDS;
-
     private static Long prepareToSendData(final int tagID, final byte[] data, final Endpoint endpoint, final ResourceScope scope) {
         log.info("Prepare to send data");
         final int dataSize = data.length;
@@ -69,18 +67,20 @@ public class CommunicationUtils {
     }
 
     private static void awaitRequest(final long request, final Worker worker, final int timeoutMs) throws TimeoutException, InterruptedException {
-        log.info("Await request");
-        int counter = 0;
-        while ((state(request) != COMPLETE) && (state(request) != ERROR) && (counter < timeoutMs)) {
-            worker.progress();
-            synchronized (timeUnit) {
-                timeUnit.wait(1);
-            }
-            counter++;
+        if (log.isInfoEnabled()) {
+            log.info("Await request");
         }
-        if (state(request) != COMPLETE) {
+        final long timeout = 1_000L * timeoutMs;
+        int counter = 0;
+        Requests.State requestState = state(request);
+        while ((requestState != COMPLETE) && (requestState != ERROR) && (counter < timeout)) {
+            worker.progress();
+            counter++;
+            requestState = state(request);
+        }
+        if (requestState != COMPLETE) {
             worker.cancelRequest(request);
-            throw new TimeoutException("A timeout occurred while receiving data");
+            throw new TimeoutException("A timeout occurred while awaiting a request");
         } else {
             Requests.release(request);
         }
