@@ -1,17 +1,22 @@
 package model;
 
 import lombok.AllArgsConstructor;
+import lombok.NoArgsConstructor;
 
-import java.io.Serializable;
+import java.io.Externalizable;
+import java.io.IOException;
+import java.io.ObjectInput;
+import java.io.ObjectOutput;
 import java.util.Arrays;
 
 @AllArgsConstructor
-public class PlasmaEntry implements Serializable {
-    public static final long serialVersionUID = 4328703;
+@NoArgsConstructor
+public class PlasmaEntry implements Externalizable {
+    public static final long serialVersionUID = 4328703L;
 
     public String key;
     public byte[] value;
-    public byte[] nextPlasmaID;
+    transient public byte[] nextPlasmaID;
 
     @Override
     public String toString() {
@@ -35,5 +40,21 @@ public class PlasmaEntry implements Serializable {
         result = 31 * result + Arrays.hashCode(value);
         result = 31 * result + Arrays.hashCode(nextPlasmaID);
         return result;
+    }
+
+    @Override
+    public void writeExternal(final ObjectOutput out) throws IOException {
+        out.writeUTF(key);
+        out.write(value);
+    }
+
+    @Override
+    public void readExternal(final ObjectInput in) throws IOException {
+        this.key = in.readUTF();
+        final int size = in.available();
+        this.value = new byte[size];
+        for (int i = 0; i < size; i++) {
+            this.value[i] = in.readByte();
+        }
     }
 }
