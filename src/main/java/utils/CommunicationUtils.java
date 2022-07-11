@@ -8,8 +8,8 @@ import de.hhu.bsinfo.infinileap.binding.MemoryRegion;
 import de.hhu.bsinfo.infinileap.binding.RequestParameters;
 import de.hhu.bsinfo.infinileap.binding.Tag;
 import de.hhu.bsinfo.infinileap.binding.Worker;
-import de.hhu.bsinfo.infinileap.util.Requests;
 import de.hhu.bsinfo.infinileap.util.CloseException;
+import de.hhu.bsinfo.infinileap.util.Requests;
 import jdk.incubator.foreign.MemorySegment;
 import jdk.incubator.foreign.ResourceScope;
 import jdk.incubator.foreign.ValueLayout;
@@ -139,7 +139,7 @@ public class CommunicationUtils {
 
     private static MemoryDescriptor getMemoryDescriptorOfByteArray(final byte[] object, final Context context) throws ControlException, CloseException {
         final MemorySegment source = MemorySegment.ofArray(object);
-        try(final MemoryRegion memoryRegion = context.allocateMemory(object.length)) {
+        try (final MemoryRegion memoryRegion = context.allocateMemory(object.length)) {
             memoryRegion.segment().copyFrom(source);
             return memoryRegion.descriptor();
         }
@@ -270,7 +270,7 @@ public class CommunicationUtils {
         return operationName;
     }
 
-    public static String awaitPutCompletionSignal(final int tagID, final PlasmaClient plasmaClient, final byte[] id, final Worker worker, final byte[] idToUpdate, final int timeoutMs, final int plasmaTimeoutMs) throws TimeoutException, SerializationException {
+    public static String awaitPutCompletionSignal(final int tagID, final PlasmaClient plasmaClient, final byte[] id, final Worker worker, final byte[] idToUpdate, final int timeoutMs, final int plasmaTimeoutMs) throws SerializationException {
         final String receivedStatusCode;
         try {
             receivedStatusCode = receiveStatusCode(tagID, worker, timeoutMs);
