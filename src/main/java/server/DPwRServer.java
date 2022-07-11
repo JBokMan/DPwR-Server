@@ -77,7 +77,6 @@ public class DPwRServer {
     private final int plasmaTimeout;
     private final int clientTimeout;
     private final int workerCount;
-    private final int threadCount;
     private final AtomicInteger serverCount = new AtomicInteger(1);
     private final Map<Integer, InetSocketAddress> serverMap = new HashMap<>();
     private final ResourcePool resources = new ResourcePool();
@@ -92,12 +91,11 @@ public class DPwRServer {
     private WorkerPool workerPool;
     private int serverID = -1;
 
-    public DPwRServer(final InetSocketAddress listenAddress, final int plasmaStoreSize, final int plasmaTimeout, final int clientTimeout, final int workerCount, final int threadCount, final Boolean verbose) {
+    public DPwRServer(final InetSocketAddress listenAddress, final int plasmaStoreSize, final int plasmaTimeout, final int clientTimeout, final int workerCount, final Boolean verbose) {
         this.listenAddress = listenAddress;
         this.plasmaTimeout = plasmaTimeout;
         this.clientTimeout = clientTimeout;
         this.workerCount = workerCount;
-        this.threadCount = threadCount;
         if (verbose) {
             setLogLevel(Level.INFO);
         } else {
@@ -109,12 +107,11 @@ public class DPwRServer {
         serverMap.put(0, this.listenAddress);
     }
 
-    public DPwRServer(final InetSocketAddress listenAddress, final InetSocketAddress mainServerAddress, final int plasmaStoreSize, final int plasmaTimeout, final int clientTimeout, final int workerCount, final int threadCount, final Boolean verbose) throws ControlException, TimeoutException, ConnectException, SerializationException {
+    public DPwRServer(final InetSocketAddress listenAddress, final InetSocketAddress mainServerAddress, final int plasmaStoreSize, final int plasmaTimeout, final int clientTimeout, final int workerCount, final Boolean verbose) throws ControlException, TimeoutException, ConnectException, SerializationException {
         this.listenAddress = listenAddress;
         this.plasmaTimeout = plasmaTimeout;
         this.clientTimeout = clientTimeout;
         this.workerCount = workerCount;
-        this.threadCount = threadCount;
         if (verbose) {
             setLogLevel(Level.INFO);
         } else {
@@ -257,7 +254,7 @@ public class DPwRServer {
 
         // worker pool count must be greater than thread count since the endpoint closes not fast enough
         this.workerPool = new WorkerPool(this.workerCount, workerParameters, context);
-        this.executorService = Executors.newFixedThreadPool(this.threadCount);
+        this.executorService = Executors.newCachedThreadPool();
 
         // Creating clean up hook
         final Thread cleanUpThread = new Thread(() -> {

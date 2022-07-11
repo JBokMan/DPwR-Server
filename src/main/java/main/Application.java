@@ -25,8 +25,6 @@ public class Application implements Callable<Integer> {
     private int clientTimeout = 500;
     @Option(names = {"-w", "--worker-count"}, description = "The number of workers in the worker pool. Default is 256")
     private int workerCount = 256;
-    @Option(names = {"-h", "--thread-count"}, description = "The number of worker threads. Default is 8")
-    private int threadCount = 8;
     @Option(names = {"-v", "--verbose"}, description = "Whether or not info logs should be displayed. Default is false")
     private boolean verbose = false;
 
@@ -42,9 +40,9 @@ public class Application implements Callable<Integer> {
         final DPwRServer server;
         try {
             if (ObjectUtils.isEmpty(mainServerAddress)) {
-                server = new DPwRServer(listenAddress, plasmaStoreSize, plasmaTimeout, clientTimeout, workerCount, threadCount, verbose);
+                server = new DPwRServer(listenAddress, plasmaStoreSize, plasmaTimeout, clientTimeout, workerCount, verbose);
             } else {
-                server = new DPwRServer(listenAddress, mainServerAddress, plasmaStoreSize, plasmaTimeout, clientTimeout, workerCount, threadCount, verbose);
+                server = new DPwRServer(listenAddress, mainServerAddress, plasmaStoreSize, plasmaTimeout, clientTimeout, workerCount, verbose);
             }
             server.listen();
             return 0;
