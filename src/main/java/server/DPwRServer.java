@@ -438,9 +438,9 @@ public class DPwRServer {
         final byte[] id = generateID(keyToGet);
 
         if (plasmaClient.contains(id)) {
-            sendStatusCode(tagID, "200", endpoint, worker, clientTimeout);
+            sendStatusCode(tagID, "231", endpoint, worker, clientTimeout);
         } else {
-            sendStatusCode(tagID, "404", endpoint, worker, clientTimeout);
+            sendStatusCode(tagID, "431", endpoint, worker, clientTimeout);
         }
         log.info("CNT operation completed");
     }
@@ -453,11 +453,12 @@ public class DPwRServer {
         final byte[] hash = plasmaClient.hash(id);
 
         if (ObjectUtils.isEmpty(hash)) {
-            sendStatusCode(tagID, "404", endpoint, worker, clientTimeout);
+            sendStatusCode(tagID, "441", endpoint, worker, clientTimeout);
         } else {
-            sendStatusCode(tagID, "200", endpoint, worker, clientTimeout);
+            sendStatusCode(tagID, "241", endpoint, worker, clientTimeout);
             sendHash(tagID, hash, endpoint, worker, clientTimeout);
         }
+        sendStatusCode(tagID, "242", endpoint, worker, clientTimeout);
         log.info("HSH operation completed");
     }
 
