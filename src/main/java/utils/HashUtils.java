@@ -37,7 +37,7 @@ public class HashUtils {
             }
             if (text.contains("timeout_test")) {
                 try {
-                    TimeUnit.SECONDS.sleep(5);
+                    TimeUnit.MILLISECONDS.sleep(600);
                 } catch (final InterruptedException e) {
                     log.error(e.getMessage());
                 }
@@ -60,11 +60,12 @@ public class HashUtils {
         return HexFormat.of().parseHex(newID);
     }
 
-    private static String bytesToHex(final byte[] bytes) {
-        final StringBuilder sb = new StringBuilder();
-        for (final byte b : bytes) {
-            sb.append(String.format("%02x", b));
+    private static String bytesToHex(final byte[] raw) {
+        final StringBuilder buffer = new StringBuilder();
+        for (final byte b : raw) {
+            buffer.append(Character.forDigit((b >> 4) & 0xF, 16));
+            buffer.append(Character.forDigit((b & 0xF), 16));
         }
-        return sb.toString();
+        return buffer.toString();
     }
 }
