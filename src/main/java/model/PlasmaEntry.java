@@ -16,7 +16,7 @@ public class PlasmaEntry implements Externalizable {
 
     public String key;
     public byte[] value;
-    transient public byte[] nextPlasmaID;
+    public byte[] nextPlasmaID;
 
     @Override
     public String toString() {
@@ -46,15 +46,23 @@ public class PlasmaEntry implements Externalizable {
     public void writeExternal(final ObjectOutput out) throws IOException {
         out.writeUTF(key);
         out.write(value);
+        out.write(nextPlasmaID);
     }
 
     @Override
     public void readExternal(final ObjectInput in) throws IOException {
         this.key = in.readUTF();
-        final int size = in.available();
+
+        final int size = in.available()-20;
         this.value = new byte[size];
         for (int i = 0; i < size; i++) {
             this.value[i] = in.readByte();
+        }
+
+        final int size2 = 20;
+        this.nextPlasmaID = new byte[size2];
+        for (int i = 0; i < size2; i++) {
+            this.nextPlasmaID[i] = in.readByte();
         }
     }
 }
