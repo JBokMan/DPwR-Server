@@ -76,5 +76,7 @@ compileJava {
 }
 
 test {
+    environment "UCX_ERROR_SIGNALS", ""
+    environment "LD_LIBRARY_PATH", "<Path to libstdc++.so>"
     useJUnitPlatform()
 }
