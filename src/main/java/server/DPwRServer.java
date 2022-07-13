@@ -31,6 +31,7 @@ import org.apache.logging.log4j.core.config.LoggerConfig;
 import utils.DPwRErrorHandler;
 import utils.WorkerPool;
 
+import java.io.IOException;
 import java.net.ConnectException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
@@ -179,7 +180,7 @@ public class DPwRServer {
         sendOperationName(tagID, "REG", endpoint, worker, clientTimeout);
         sendAddress(tagID, this.listenAddress, endpoint, worker, clientTimeout);
 
-        final String statusCode = receiveStatusCode(tagID, worker, clientTimeout);
+        final String statusCode = receiveStatusCode(tagID, worker, clientTimeout, scope);
 
         if ("200".equals(statusCode)) {
             final int serverCount = receiveInteger(tagID, worker, clientTimeout);
@@ -211,16 +212,14 @@ public class DPwRServer {
         sendOperationName(tagID, "REG", endpoint, worker, clientTimeout);
         sendAddress(tagID, this.listenAddress, endpoint, worker, clientTimeout);
 
-        final String statusCode = receiveStatusCode(tagID, worker, clientTimeout);
+        final String statusCode = receiveStatusCode(tagID, worker, clientTimeout, scope);
 
-        if ("206".equals(statusCode)) {
-            sendSingleInteger(tagID, this.serverID, endpoint, worker, clientTimeout);
-        } else if ("200".equals(statusCode)) {
-            throw new ConnectException("Given address was of the main server and not of the secondary server");
-        } else if ("400".equals(statusCode)) {
-            throw new ConnectException("This server was already registered");
-        } else {
-            throw new ConnectException("Secondary server could not be reached");
+        switch (statusCode) {
+            case "206" -> sendSingleInteger(tagID, this.serverID, endpoint, worker, clientTimeout);
+            case "200" ->
+                    throw new ConnectException("Given address was of the main server and not of the secondary server");
+            case "400" -> throw new ConnectException("This server was already registered");
+            default -> throw new ConnectException("Secondary server could not be reached");
         }
         endpoint.close();
     }
@@ -318,7 +317,7 @@ public class DPwRServer {
         return endpoint;
     }
 
-    private void handleRequestLoop(final Worker worker, final Endpoint endpoint, final int tagID) throws ControlException, CloseException, TimeoutException {
+    private void handleRequestLoop(final Worker worker, final Endpoint endpoint, final int tagID) throws ControlException, CloseException, TimeoutException, IOException, ClassNotFoundException {
         handleLoop:
         while (true) {
             worker.await();
@@ -348,117 +347,128 @@ public class DPwRServer {
 
     private void putOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException, ControlException, CloseException {
         log.info("Start PUT operation");
-        final String keyToPut = receiveKey(tagID, worker, clientTimeout);
-        byte[] id = generateID(keyToPut);
-        final int entrySize = receiveInteger(tagID, worker, clientTimeout);
-        final String statusCode;
+        try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
+            final String keyToPut = receiveKey(tagID, worker, clientTimeout, scope);
+            byte[] id = generateID(keyToPut);
+            final int entrySize = receiveInteger(tagID, worker, clientTimeout);
+            final String statusCode;
 
-        if (plasmaClient.contains(id)) {
-            log.warn("Plasma does contain the id");
-            final PlasmaEntry plasmaEntry = getPlasmaEntry(plasmaClient, id, plasmaTimeout);
-            final byte[] objectIdWithFreeNextID = getObjectIdOfNextEntryWithEmptyNextID(plasmaClient, plasmaEntry, id, keyToPut, plasmaTimeout);
+            if (plasmaClient.contains(id)) {
+                log.warn("Plasma does contain the id");
+                final PlasmaEntry plasmaEntry = getPlasmaEntry(plasmaClient, id, plasmaTimeout);
+                final byte[] objectIdWithFreeNextID = getObjectIdOfNextEntryWithEmptyNextID(plasmaClient, plasmaEntry, id, keyToPut, plasmaTimeout);
 
-            if (ArrayUtils.isEmpty(objectIdWithFreeNextID)) {
-                log.warn("Object with key is already in plasma");
-                statusCode = "400";
+                if (ArrayUtils.isEmpty(objectIdWithFreeNextID)) {
+                    log.warn("Object with key is already in plasma");
+                    statusCode = "400";
+                } else {
+                    log.warn("Key is not in plasma, handling id collision");
+                    id = generateNextIdOfId(objectIdWithFreeNextID);
+
+                    createEntryAndSendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, clientTimeout);
+                    statusCode = awaitPutCompletionSignal(tagID, plasmaClient, id, worker, objectIdWithFreeNextID, clientTimeout, plasmaTimeout, scope);
+                }
             } else {
-                log.warn("Key is not in plasma, handling id collision");
-                id = generateNextIdOfId(objectIdWithFreeNextID);
-
+                log.info("Plasma does not contain the id");
                 createEntryAndSendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, clientTimeout);
-                statusCode = awaitPutCompletionSignal(tagID, plasmaClient, id, worker, objectIdWithFreeNextID, clientTimeout, plasmaTimeout);
+                statusCode = awaitPutCompletionSignal(tagID, plasmaClient, id, worker, null, clientTimeout, plasmaTimeout, scope);
             }
-        } else {
-            log.info("Plasma does not contain the id");
-            createEntryAndSendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, clientTimeout);
-            statusCode = awaitPutCompletionSignal(tagID, plasmaClient, id, worker, null, clientTimeout, plasmaTimeout);
+            sendStatusCode(tagID, statusCode, endpoint, worker, clientTimeout);
         }
-        sendStatusCode(tagID, statusCode, endpoint, worker, clientTimeout);
         log.info("PUT operation completed");
     }
 
-    private void getOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws ControlException, TimeoutException, CloseException {
+    private void getOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws ControlException, TimeoutException, CloseException, IOException, ClassNotFoundException {
         log.info("Start GET operation");
-        final String keyToGet = receiveKey(tagID, worker, clientTimeout);
-        final byte[] id = generateID(keyToGet);
+        try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
+            final String keyToGet = receiveKey(tagID, worker, clientTimeout, scope);
+            final byte[] id = generateID(keyToGet);
 
-        ByteBuffer entryBuffer = null;
+            ByteBuffer entryBuffer = null;
 
-        if (plasmaClient.contains(id)) {
-            entryBuffer = plasmaClient.getObjAsByteBuffer(id, plasmaTimeout, false);
-            final PlasmaEntry entry = getPlasmaEntryFromBuffer(entryBuffer);
+            if (plasmaClient.contains(id)) {
+                entryBuffer = plasmaClient.getObjAsByteBuffer(id, plasmaTimeout, false);
+                final PlasmaEntry entry = getPlasmaEntryFromBuffer(entryBuffer);
 
-            if (!StringUtils.equals(keyToGet, entry.key)) {
-                log.warn("Entry with id: {} has not key: {}", id, keyToGet);
-                entryBuffer = findEntryWithKey(plasmaClient, keyToGet, entryBuffer, plasmaTimeout);
+                if (!StringUtils.equals(keyToGet, entry.key)) {
+                    log.warn("Entry with id: {} has not key: {}", id, keyToGet);
+                    entryBuffer = findEntryWithKey(plasmaClient, keyToGet, entryBuffer, plasmaTimeout);
+                }
             }
-        }
 
-        if (ObjectUtils.isNotEmpty(entryBuffer)) {
-            sendStatusCode(tagID, "211", endpoint, worker, clientTimeout);
-            sendObjectAddress(tagID, entryBuffer, endpoint, worker, context, clientTimeout);
-            // Wait for client to signal successful transmission
-            final String statusCode = receiveStatusCode(tagID, worker, clientTimeout);
-            if ("212".equals(statusCode)) {
-                sendStatusCode(tagID, "213", endpoint, worker, clientTimeout);
+            if (ObjectUtils.isNotEmpty(entryBuffer)) {
+                sendStatusCode(tagID, "211", endpoint, worker, clientTimeout);
+                sendObjectAddress(tagID, entryBuffer, endpoint, worker, context, clientTimeout);
+                // Wait for client to signal successful transmission
+                final String statusCode;
+                statusCode = receiveStatusCode(tagID, worker, clientTimeout, scope);
+                if ("212".equals(statusCode)) {
+                    sendStatusCode(tagID, "213", endpoint, worker, clientTimeout);
+                } else {
+                    sendStatusCode(tagID, "412", endpoint, worker, clientTimeout);
+                }
             } else {
-                sendStatusCode(tagID, "412", endpoint, worker, clientTimeout);
+                sendStatusCode(tagID, "411", endpoint, worker, clientTimeout);
             }
-        } else {
-            sendStatusCode(tagID, "411", endpoint, worker, clientTimeout);
         }
         log.info("GET operation completed");
     }
 
     private void deleteOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException, NullPointerException {
         log.info("Start DEL operation");
-        final String keyToDelete = receiveKey(tagID, worker, clientTimeout);
-        final byte[] id = generateID(keyToDelete);
+        try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
+            final String keyToDelete = receiveKey(tagID, worker, clientTimeout, scope);
+            final byte[] id = generateID(keyToDelete);
 
-        String statusCode = "421";
+            String statusCode = "421";
 
-        if (plasmaClient.contains(id)) {
-            log.info("Entry with id {} exists", id);
-            final PlasmaEntry entry = getPlasmaEntry(plasmaClient, id, plasmaTimeout);
-            statusCode = findAndDeleteEntryWithKey(plasmaClient, keyToDelete, entry, id, new byte[20], plasmaTimeout);
+            if (plasmaClient.contains(id)) {
+                log.info("Entry with id {} exists", id);
+                final PlasmaEntry entry = getPlasmaEntry(plasmaClient, id, plasmaTimeout);
+                statusCode = findAndDeleteEntryWithKey(plasmaClient, keyToDelete, entry, id, new byte[20], plasmaTimeout);
+            }
+
+            if ("221".equals(statusCode)) {
+                log.info("Object with key \"{}\" found and deleted", keyToDelete);
+            } else {
+                log.warn("Object with key \"{}\" was not found in plasma store", keyToDelete);
+            }
+            sendStatusCode(tagID, statusCode, endpoint, worker, clientTimeout);
         }
-
-        if ("221".equals(statusCode)) {
-            log.info("Object with key \"{}\" found and deleted", keyToDelete);
-        } else {
-            log.warn("Object with key \"{}\" was not found in plasma store", keyToDelete);
-        }
-        sendStatusCode(tagID, statusCode, endpoint, worker, clientTimeout);
         log.info("DEL operation completed");
     }
 
     private void containsOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException {
         log.info("Start CNT operation");
-        final String keyToGet = receiveKey(tagID, worker, clientTimeout);
-        final byte[] id = generateID(keyToGet);
+        try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
+            final String keyToGet = receiveKey(tagID, worker, clientTimeout, scope);
+            final byte[] id = generateID(keyToGet);
 
-        if (plasmaClient.contains(id)) {
-            sendStatusCode(tagID, "231", endpoint, worker, clientTimeout);
-        } else {
-            sendStatusCode(tagID, "431", endpoint, worker, clientTimeout);
+            if (plasmaClient.contains(id)) {
+                sendStatusCode(tagID, "231", endpoint, worker, clientTimeout);
+            } else {
+                sendStatusCode(tagID, "431", endpoint, worker, clientTimeout);
+            }
         }
         log.info("CNT operation completed");
     }
 
     private void hashOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException {
         log.info("Start HSH operation");
-        final String keyToGet = receiveKey(tagID, worker, clientTimeout);
-        final byte[] id = generateID(keyToGet);
+        try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
+            final String keyToGet = receiveKey(tagID, worker, clientTimeout, scope);
+            final byte[] id = generateID(keyToGet);
 
-        final byte[] hash = plasmaClient.hash(id);
+            final byte[] hash = plasmaClient.hash(id);
 
-        if (ObjectUtils.isEmpty(hash)) {
-            sendStatusCode(tagID, "441", endpoint, worker, clientTimeout);
-        } else {
-            sendStatusCode(tagID, "241", endpoint, worker, clientTimeout);
-            sendHash(tagID, hash, endpoint, worker, clientTimeout);
+            if (ObjectUtils.isEmpty(hash)) {
+                sendStatusCode(tagID, "441", endpoint, worker, clientTimeout);
+            } else {
+                sendStatusCode(tagID, "241", endpoint, worker, clientTimeout);
+                sendHash(tagID, hash, endpoint, worker, clientTimeout);
+            }
+            sendStatusCode(tagID, "242", endpoint, worker, clientTimeout);
         }
-        sendStatusCode(tagID, "242", endpoint, worker, clientTimeout);
         log.info("HSH operation completed");
     }
 
@@ -470,7 +480,9 @@ public class DPwRServer {
         for (final byte[] entry : entries) {
             sendObjectAddress(tagID, entry, endpoint, worker, context, clientTimeout);
             // Wait for client to signal successful transmission
-            receiveStatusCode(tagID, worker, clientTimeout);
+            try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
+                receiveStatusCode(tagID, worker, clientTimeout, scope);
+            }
         }
         log.info("LST operation completed");
     }
