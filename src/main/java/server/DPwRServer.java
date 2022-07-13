@@ -176,19 +176,19 @@ public class DPwRServer {
         final EndpointParameters endpointParams = new EndpointParameters(scope).setRemoteAddress(mainServerAddress).setErrorHandler(errorHandler);
         final Endpoint endpoint = worker.createEndpoint(endpointParams);
 
-        final int tagID = receiveTagID(worker, clientTimeout);
-        sendOperationName(tagID, "REG", endpoint, worker, clientTimeout);
+        final int tagID = receiveTagID(worker, clientTimeout, scope);
+        sendOperationName(tagID, "REG", endpoint, worker, clientTimeout, scope);
         sendAddress(tagID, this.listenAddress, endpoint, worker, clientTimeout);
 
         final String statusCode = receiveStatusCode(tagID, worker, clientTimeout, scope);
 
         if ("200".equals(statusCode)) {
-            final int serverCount = receiveInteger(tagID, worker, clientTimeout);
+            final int serverCount = receiveInteger(tagID, worker, clientTimeout, scope);
             this.serverCount.set(serverCount);
             this.serverID = serverCount - 1;
 
             for (int i = 0; i < serverCount; i++) {
-                final InetSocketAddress serverAddress = receiveAddress(tagID, worker, clientTimeout);
+                final InetSocketAddress serverAddress = receiveAddress(tagID, worker, clientTimeout, scope);
                 serverMap.put(i, serverAddress);
             }
             serverMap.put(this.serverID, this.listenAddress);
@@ -208,14 +208,14 @@ public class DPwRServer {
         final EndpointParameters endpointParams = new EndpointParameters(scope).setRemoteAddress(address).setErrorHandler(errorHandler);
         final Endpoint endpoint = worker.createEndpoint(endpointParams);
 
-        final int tagID = receiveTagID(worker, clientTimeout);
-        sendOperationName(tagID, "REG", endpoint, worker, clientTimeout);
+        final int tagID = receiveTagID(worker, clientTimeout, scope);
+        sendOperationName(tagID, "REG", endpoint, worker, clientTimeout, scope);
         sendAddress(tagID, this.listenAddress, endpoint, worker, clientTimeout);
 
         final String statusCode = receiveStatusCode(tagID, worker, clientTimeout, scope);
 
         switch (statusCode) {
-            case "206" -> sendSingleInteger(tagID, this.serverID, endpoint, worker, clientTimeout);
+            case "206" -> sendSingleInteger(tagID, this.serverID, endpoint, worker, clientTimeout, scope);
             case "200" ->
                     throw new ConnectException("Given address was of the main server and not of the secondary server");
             case "400" -> throw new ConnectException("This server was already registered");
@@ -313,7 +313,7 @@ public class DPwRServer {
     private Endpoint establishConnection(final ConnectionRequest request, final Worker currentWorker, final int currentTagID, final ResourceScope scope) throws ControlException, TimeoutException {
         log.info("Establish connection");
         final Endpoint endpoint = currentWorker.createEndpoint(new EndpointParameters(scope).setConnectionRequest(request).setErrorHandler(errorHandler));
-        sendSingleInteger(0, currentTagID, endpoint, currentWorker, clientTimeout);
+        sendSingleInteger(0, currentTagID, endpoint, currentWorker, clientTimeout, scope);
         return endpoint;
     }
 
@@ -338,19 +338,19 @@ public class DPwRServer {
                 case "REG" -> regOperation(tagID, worker, endpoint);
                 case "INF" -> infOperation(tagID, worker, endpoint);
                 case "BYE" -> {
-                    sendStatusCode(tagID, "BYE", endpoint, worker, clientTimeout);
+                    sendStatusCode(tagID, "BYE", endpoint, worker, clientTimeout, ResourceScope.newConfinedScope());
                     break handleLoop;
                 }
             }
         }
     }
 
-    private void putOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException, ControlException, CloseException {
+    private void putOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException, ControlException, CloseException, IOException, ClassNotFoundException {
         log.info("Start PUT operation");
         try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
             final String keyToPut = receiveKey(tagID, worker, clientTimeout, scope);
             byte[] id = generateID(keyToPut);
-            final int entrySize = receiveInteger(tagID, worker, clientTimeout);
+            final int entrySize = receiveInteger(tagID, worker, clientTimeout, scope);
             final String statusCode;
 
             if (plasmaClient.contains(id)) {
@@ -365,15 +365,15 @@ public class DPwRServer {
                     log.warn("Key is not in plasma, handling id collision");
                     id = generateNextIdOfId(objectIdWithFreeNextID);
 
-                    createEntryAndSendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, clientTimeout);
+                    createEntryAndSendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, clientTimeout, scope);
                     statusCode = awaitPutCompletionSignal(tagID, plasmaClient, id, worker, objectIdWithFreeNextID, clientTimeout, plasmaTimeout, scope);
                 }
             } else {
                 log.info("Plasma does not contain the id");
-                createEntryAndSendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, clientTimeout);
+                createEntryAndSendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, clientTimeout, scope);
                 statusCode = awaitPutCompletionSignal(tagID, plasmaClient, id, worker, null, clientTimeout, plasmaTimeout, scope);
             }
-            sendStatusCode(tagID, statusCode, endpoint, worker, clientTimeout);
+            sendStatusCode(tagID, statusCode, endpoint, worker, clientTimeout, scope);
         }
         log.info("PUT operation completed");
     }
@@ -397,24 +397,24 @@ public class DPwRServer {
             }
 
             if (ObjectUtils.isNotEmpty(entryBuffer)) {
-                sendStatusCode(tagID, "211", endpoint, worker, clientTimeout);
+                sendStatusCode(tagID, "211", endpoint, worker, clientTimeout, scope);
                 sendObjectAddress(tagID, entryBuffer, endpoint, worker, context, clientTimeout);
                 // Wait for client to signal successful transmission
                 final String statusCode;
                 statusCode = receiveStatusCode(tagID, worker, clientTimeout, scope);
                 if ("212".equals(statusCode)) {
-                    sendStatusCode(tagID, "213", endpoint, worker, clientTimeout);
+                    sendStatusCode(tagID, "213", endpoint, worker, clientTimeout, scope);
                 } else {
-                    sendStatusCode(tagID, "412", endpoint, worker, clientTimeout);
+                    sendStatusCode(tagID, "412", endpoint, worker, clientTimeout, scope);
                 }
             } else {
-                sendStatusCode(tagID, "411", endpoint, worker, clientTimeout);
+                sendStatusCode(tagID, "411", endpoint, worker, clientTimeout, scope);
             }
         }
         log.info("GET operation completed");
     }
 
-    private void deleteOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException, NullPointerException {
+    private void deleteOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException, NullPointerException, IOException, ClassNotFoundException {
         log.info("Start DEL operation");
         try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
             final String keyToDelete = receiveKey(tagID, worker, clientTimeout, scope);
@@ -433,7 +433,7 @@ public class DPwRServer {
             } else {
                 log.warn("Object with key \"{}\" was not found in plasma store", keyToDelete);
             }
-            sendStatusCode(tagID, statusCode, endpoint, worker, clientTimeout);
+            sendStatusCode(tagID, statusCode, endpoint, worker, clientTimeout, scope);
         }
         log.info("DEL operation completed");
     }
@@ -445,9 +445,9 @@ public class DPwRServer {
             final byte[] id = generateID(keyToGet);
 
             if (plasmaClient.contains(id)) {
-                sendStatusCode(tagID, "231", endpoint, worker, clientTimeout);
+                sendStatusCode(tagID, "231", endpoint, worker, clientTimeout, scope);
             } else {
-                sendStatusCode(tagID, "431", endpoint, worker, clientTimeout);
+                sendStatusCode(tagID, "431", endpoint, worker, clientTimeout, scope);
             }
         }
         log.info("CNT operation completed");
@@ -462,25 +462,24 @@ public class DPwRServer {
             final byte[] hash = plasmaClient.hash(id);
 
             if (ObjectUtils.isEmpty(hash)) {
-                sendStatusCode(tagID, "441", endpoint, worker, clientTimeout);
+                sendStatusCode(tagID, "441", endpoint, worker, clientTimeout, scope);
             } else {
-                sendStatusCode(tagID, "241", endpoint, worker, clientTimeout);
+                sendStatusCode(tagID, "241", endpoint, worker, clientTimeout, scope);
                 sendHash(tagID, hash, endpoint, worker, clientTimeout);
             }
-            sendStatusCode(tagID, "242", endpoint, worker, clientTimeout);
+            sendStatusCode(tagID, "242", endpoint, worker, clientTimeout, scope);
         }
         log.info("HSH operation completed");
     }
 
     private void listOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws ControlException, TimeoutException, CloseException {
         log.info("Start LST operation");
-
-        final List<byte[]> entries = plasmaClient.list();
-        sendSingleInteger(tagID, entries.size(), endpoint, worker, clientTimeout);
-        for (final byte[] entry : entries) {
-            sendObjectAddress(tagID, entry, endpoint, worker, context, clientTimeout);
-            // Wait for client to signal successful transmission
-            try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
+        try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
+            final List<byte[]> entries = plasmaClient.list();
+            sendSingleInteger(tagID, entries.size(), endpoint, worker, clientTimeout, scope);
+            for (final byte[] entry : entries) {
+                sendObjectAddress(tagID, entry, endpoint, worker, context, clientTimeout);
+                // Wait for client to signal successful transmission
                 receiveStatusCode(tagID, worker, clientTimeout, scope);
             }
         }
@@ -489,25 +488,27 @@ public class DPwRServer {
 
     private void regOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException {
         log.info("Start REG operation");
-        final InetSocketAddress newServerAddress = receiveAddress(tagID, worker, clientTimeout);
+        try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
+            final InetSocketAddress newServerAddress = receiveAddress(tagID, worker, clientTimeout, scope);
 
-        if (this.serverMap.containsValue(newServerAddress)) {
-            sendStatusCode(tagID, "400", endpoint, worker, clientTimeout);
-            return;
-        }
+            if (this.serverMap.containsValue(newServerAddress)) {
+                sendStatusCode(tagID, "400", endpoint, worker, clientTimeout, scope);
+                return;
+            }
 
-        if (this.serverID == 0) {
-            log.info("This is the main server");
-            final int currentServerCount = this.serverCount.incrementAndGet();
-            sendStatusCode(tagID, "200", endpoint, worker, clientTimeout);
-            sendServerMap(tagID, this.serverMap, worker, endpoint, currentServerCount, clientTimeout);
-            this.serverMap.put(currentServerCount - 1, newServerAddress);
-        } else {
-            log.info("This is a secondary server");
-            sendStatusCode(tagID, "206", endpoint, worker, clientTimeout);
-            final int serverID = receiveInteger(tagID, worker, clientTimeout);
-            this.serverMap.put(serverID, newServerAddress);
-            this.serverCount.incrementAndGet();
+            if (this.serverID == 0) {
+                log.info("This is the main server");
+                final int currentServerCount = this.serverCount.incrementAndGet();
+                sendStatusCode(tagID, "200", endpoint, worker, clientTimeout, scope);
+                sendServerMap(tagID, this.serverMap, worker, endpoint, currentServerCount, clientTimeout);
+                this.serverMap.put(currentServerCount - 1, newServerAddress);
+            } else {
+                log.info("This is a secondary server");
+                sendStatusCode(tagID, "206", endpoint, worker, clientTimeout, scope);
+                final int serverID = receiveInteger(tagID, worker, clientTimeout, scope);
+                this.serverMap.put(serverID, newServerAddress);
+                this.serverCount.incrementAndGet();
+            }
         }
         log.info(serverMap.entrySet().toString());
         log.info("REG operation completed");

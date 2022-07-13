@@ -39,12 +39,12 @@ public class PlasmaUtils {
         plasmaClient.seal(id);
     }
 
-    public static PlasmaEntry getPlasmaEntry(final PlasmaClient client, final byte[] id, final int timeoutMs) {
+    public static PlasmaEntry getPlasmaEntry(final PlasmaClient client, final byte[] id, final int timeoutMs) throws IOException, ClassNotFoundException {
         final byte[] entry = client.get(id, timeoutMs, false);
-        return deserialize(entry);
+        return deserializePlasmaEntry(entry);
     }
 
-    public static void updateNextIdOfEntry(final PlasmaClient plasmaClient, final byte[] idToUpdate, final byte[] newNextId, final int plasmaTimeoutMs) {
+    public static void updateNextIdOfEntry(final PlasmaClient plasmaClient, final byte[] idToUpdate, final byte[] newNextId, final int plasmaTimeoutMs) throws IOException, ClassNotFoundException {
         log.info("Update entry of id {}", idToUpdate);
         final PlasmaEntry entryToUpdate = getPlasmaEntry(plasmaClient, idToUpdate, plasmaTimeoutMs);
         deleteById(plasmaClient, idToUpdate);
@@ -115,7 +115,7 @@ public class PlasmaUtils {
         }
     }
 
-    public static String findAndDeleteEntryWithKey(final PlasmaClient plasmaClient, final String keyToDelete, final PlasmaEntry startEntry, final byte[] startID, final byte[] previousID, final int plasmaTimeoutMs) {
+    public static String findAndDeleteEntryWithKey(final PlasmaClient plasmaClient, final String keyToDelete, final PlasmaEntry startEntry, final byte[] startID, final byte[] previousID, final int plasmaTimeoutMs) throws IOException, ClassNotFoundException {
         final byte[] nextID = startEntry.nextPlasmaID;
 
         if (keyToDelete.equals(startEntry.key)) {
