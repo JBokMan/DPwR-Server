@@ -19,12 +19,10 @@ public class Application implements Callable<Integer> {
     private InetSocketAddress mainServerAddress;
     @Option(names = {"-s", "--size"}, description = "The space that the plasma store should reserve in megabytes. Default is 1000MB")
     private int plasmaStoreSize = 1000;
-    @Option(names = {"-p", "--plasma-timeout"}, description = "The timeout for plasma operations in milliseconds. Default is 500MS")
-    private int plasmaTimeout = 500;
     @Option(names = {"-t", "--client-timeout"}, description = "The timeout for client operations in milliseconds. Default is 500MS")
     private int clientTimeout = 500;
     @Option(names = {"-w", "--worker-count"}, description = "The number of workers in the worker pool. Default is 256")
-    private int workerCount = 256;
+    private int workerCount = 8;
     @Option(names = {"-v", "--verbose"}, description = "Whether or not info logs should be displayed. Default is false")
     private boolean verbose = false;
 
@@ -40,9 +38,9 @@ public class Application implements Callable<Integer> {
         final DPwRServer server;
         try {
             if (ObjectUtils.isEmpty(mainServerAddress)) {
-                server = new DPwRServer(listenAddress, plasmaStoreSize, plasmaTimeout, clientTimeout, workerCount, verbose);
+                server = new DPwRServer(listenAddress, plasmaStoreSize, clientTimeout, workerCount, verbose);
             } else {
-                server = new DPwRServer(listenAddress, mainServerAddress, plasmaStoreSize, plasmaTimeout, clientTimeout, workerCount, verbose);
+                server = new DPwRServer(listenAddress, mainServerAddress, plasmaStoreSize, clientTimeout, workerCount, verbose);
             }
             server.listen();
             return 0;
