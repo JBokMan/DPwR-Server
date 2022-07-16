@@ -197,6 +197,8 @@ public class DPwRServer {
             log.error("Closing resource failed", e);
         } catch (final InterruptedException e) {
             log.error("Unexpected interrupt occurred", e);
+        } catch (TimeoutException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -238,7 +240,7 @@ public class DPwRServer {
     }
 
     @SuppressWarnings("InfiniteLoopStatement")
-    private void listenLoop() throws ControlException, InterruptedException {
+    private void listenLoop() throws ControlException, InterruptedException, TimeoutException {
         final LinkedBlockingQueue<ConnectionRequest> connectionQueue = new LinkedBlockingQueue<>();
 
         log.info("Listening for new connection requests on {}", listenAddress);

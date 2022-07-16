@@ -8,6 +8,7 @@ import de.hhu.bsinfo.infinileap.binding.Endpoint;
 import de.hhu.bsinfo.infinileap.binding.EndpointParameters;
 import de.hhu.bsinfo.infinileap.binding.ErrorHandler;
 import de.hhu.bsinfo.infinileap.binding.NativeLogger;
+import de.hhu.bsinfo.infinileap.binding.RequestParameters;
 import de.hhu.bsinfo.infinileap.binding.Worker;
 import de.hhu.bsinfo.infinileap.binding.WorkerParameters;
 import de.hhu.bsinfo.infinileap.util.CloseException;
@@ -32,6 +33,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static utils.CommunicationUtils.awaitPutCompletionSignal;
+import static utils.CommunicationUtils.awaitRequests;
 import static utils.CommunicationUtils.createEntryAndSendNewEntryAddress;
 import static utils.CommunicationUtils.receiveAddress;
 import static utils.CommunicationUtils.receiveInteger;
@@ -128,7 +130,7 @@ public class WorkerThread extends Thread {
                         case "REG" -> regOperation(tagID, worker, endpoint);
                         case "INF" -> infOperation(tagID, worker, endpoint);
                         case "BYE" -> {
-                            sendStatusCode(tagID, "BYE", endpoint, worker, clientTimeout, ResourceScope.newConfinedScope());
+                            //sendStatusCode(tagID, "BYE", endpoint, worker, clientTimeout, ResourceScope.newConfinedScope());
                             removeClient(i);
                         }
                     }
@@ -316,11 +318,17 @@ public class WorkerThread extends Thread {
         log.info("INF operation completed");
     }
 
-    private void removeClient(final int index) {
-        endpointsAndTags.get(index).getLeft().close();
-        endpointsAndTags.remove(index);
-        resourceScopes.get(index).close();
-        resourceScopes.remove(index);
+    private void removeClient(final int index) throws TimeoutException {
+        final Endpoint endpoint = endpointsAndTags.remove(index).getLeft();
+        final long[] requests = new long[1];
+        requests[0] = endpoint.closeNonBlocking(new RequestParameters().setFlags(RequestParameters.Flag.CLOSE_FORCE));
+        try {
+            awaitRequests(requests, worker, clientTimeout);
+        } catch (final TimeoutException e) {
+            endpoint.close();
+        }
+        endpoint.close();
+        resourceScopes.remove(index).close();
     }
 
     protected <T extends AutoCloseable> T pushResource(final T resource) {
