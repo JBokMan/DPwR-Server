@@ -37,7 +37,7 @@ import static utils.PlasmaUtils.updateNextIdOfEntry;
 public class CommunicationUtils {
 
     private static Long prepareToSendData(final int tagID, final byte[] data, final Endpoint endpoint, final ResourceScope scope) {
-        log.info("Prepare to send data");
+        log.info("[{}] Prepare to send data", tagID);
         final int dataSize = data.length;
 
         final MemorySegment source = MemorySegment.ofArray(data);
@@ -61,7 +61,7 @@ public class CommunicationUtils {
     }
 
     private static Long prepareToSendRemoteKey(final int tagID, final MemoryDescriptor descriptor, final Endpoint endpoint) {
-        log.info("Prepare to send remote key");
+        log.info("[{}] Prepare to send remote key", tagID);
         return endpoint.sendTagged(descriptor, Tag.of(tagID));
     }
 
@@ -140,7 +140,7 @@ public class CommunicationUtils {
     }
 
     public static void sendObjectAddress(final int tagID, final ByteBuffer objectBuffer, final Endpoint endpoint, final Worker worker, final Context context, final int timeoutMs) throws CloseException, ControlException, TimeoutException {
-        log.info("Send object address");
+        log.info("[{}] Send object address", tagID);
         MemoryDescriptor objectAddress = null;
         try {
             objectAddress = getMemoryDescriptorOfByteBuffer(objectBuffer, context);
@@ -152,7 +152,7 @@ public class CommunicationUtils {
     }
 
     public static void sendObjectAddress(final int tagID, final byte[] object, final Endpoint endpoint, final Worker worker, final Context context, final int timeoutMs) throws CloseException, ControlException, TimeoutException {
-        log.info("Send object address");
+        log.info("[{}] Send object address", tagID);
         MemoryDescriptor objectAddress = null;
         try {
             objectAddress = getMemoryDescriptorOfByteArray(object, context);
@@ -221,7 +221,7 @@ public class CommunicationUtils {
         final int number;
         final ByteBuffer integerByteBuffer = receiveData(tagID, Integer.BYTES, worker, timeoutMs, scope);
         number = integerByteBuffer.getInt();
-        log.info("Received \"{}\"", number);
+        log.info("[{}] Received \"{}\"", tagID, number);
         return number;
     }
 
@@ -250,7 +250,7 @@ public class CommunicationUtils {
             keyBytes[i] = keyBuffer.get();
         }
         final String key = new String(keyBytes, StandardCharsets.UTF_8);
-        log.info("Received \"{}\"", key);
+        log.info("[{}] Received \"{}\"", tagID, key);
 
         return key;
     }
@@ -259,7 +259,7 @@ public class CommunicationUtils {
         final String statusCode;
         final ByteBuffer statusCodeByteBuffer = receiveData(tagID, 6, worker, timeoutMs, scope);
         statusCode = String.valueOf(statusCodeByteBuffer.getChar()) + statusCodeByteBuffer.getChar() + statusCodeByteBuffer.getChar();
-        log.info("Received status code: \"{}\"", statusCode);
+        log.info("[{}] Received status code: \"{}\"", tagID, statusCode);
         return statusCode;
     }
 
@@ -269,7 +269,7 @@ public class CommunicationUtils {
             final ByteBuffer statusCodeByteBuffer = receiveData(tagID, 6, worker, timeoutMs, scope);
             operationName = String.valueOf(statusCodeByteBuffer.getChar()) + statusCodeByteBuffer.getChar() + statusCodeByteBuffer.getChar();
         }
-        log.info("Received operation name: \"{}\"", operationName);
+        log.info("[{}] Received operation name: \"{}\"", tagID, operationName);
         return operationName;
     }
 
@@ -289,7 +289,7 @@ public class CommunicationUtils {
             }
             return "202";
         } else {
-            log.error("Wrong status code: " + receivedStatusCode + " deleting entry.");
+            log.error("[{}] Wrong status code: " + receivedStatusCode + " deleting entry.", tagID);
             plasmaClient.seal(id);
             deleteById(plasmaClient, id);
             return "402";

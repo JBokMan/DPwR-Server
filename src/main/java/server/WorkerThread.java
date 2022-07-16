@@ -85,7 +85,7 @@ public class WorkerThread extends Thread {
         this.worker = pushResource(context.createWorker(workerParameters));
     }
 
-    public void addClient(final ConnectionRequest request) {
+    public void addClient(final ConnectionRequest request) throws TimeoutException {
         final ConnectionRequest request_copy = new ConnectionRequest(MemoryAddress.ofLong(request.address().toRawLongValue()), request.getData());
         try {
             resourceScopes.add(ResourceScope.newSharedScope());
@@ -143,7 +143,7 @@ public class WorkerThread extends Thread {
     }
 
     private void putOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException, ControlException, CloseException, IOException, ClassNotFoundException {
-        log.info("Start PUT operation");
+        log.info("[{}] Start PUT operation", tagID);
         try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
             final String keyToPut = receiveKey(tagID, worker, clientTimeout, scope);
             byte[] id = generateID(keyToPut);
@@ -151,32 +151,32 @@ public class WorkerThread extends Thread {
             final String statusCode;
 
             if (plasmaClient.contains(id)) {
-                log.warn("Plasma does contain the id");
+                log.warn("[{}] Plasma does contain the id", tagID);
                 final PlasmaEntry plasmaEntry = getPlasmaEntry(plasmaClient, id, plasmaTimeout);
                 final byte[] objectIdWithFreeNextID = getObjectIdOfNextEntryWithEmptyNextID(plasmaClient, plasmaEntry, id, keyToPut, plasmaTimeout);
 
                 if (ArrayUtils.isEmpty(objectIdWithFreeNextID)) {
-                    log.warn("Object with key is already in plasma");
+                    log.warn("[{}] Object with key is already in plasma", tagID);
                     statusCode = "400";
                 } else {
-                    log.warn("Key is not in plasma, handling id collision");
+                    log.warn("[{}] Key is not in plasma, handling id collision", tagID);
                     id = generateNextIdOfId(objectIdWithFreeNextID);
 
                     createEntryAndSendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, clientTimeout, scope);
                     statusCode = awaitPutCompletionSignal(tagID, plasmaClient, id, worker, objectIdWithFreeNextID, clientTimeout, plasmaTimeout, scope);
                 }
             } else {
-                log.info("Plasma does not contain the id");
+                log.info("[{}] Plasma does not contain the id", tagID);
                 createEntryAndSendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, clientTimeout, scope);
                 statusCode = awaitPutCompletionSignal(tagID, plasmaClient, id, worker, null, clientTimeout, plasmaTimeout, scope);
             }
             sendStatusCode(tagID, statusCode, endpoint, worker, clientTimeout, scope);
         }
-        log.info("PUT operation completed");
+        log.info("[{}] PUT operation completed", tagID);
     }
 
     private void getOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws ControlException, TimeoutException, CloseException, IOException, ClassNotFoundException {
-        log.info("Start GET operation");
+        log.info("[{}] Start GET operation", tagID);
         try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
             final String keyToGet = receiveKey(tagID, worker, clientTimeout, scope);
             final byte[] id = generateID(keyToGet);
@@ -188,7 +188,7 @@ public class WorkerThread extends Thread {
                 final PlasmaEntry entry = getPlasmaEntryFromBuffer(entryBuffer);
 
                 if (!StringUtils.equals(keyToGet, entry.key)) {
-                    log.warn("Entry with id: {} has not key: {}", id, keyToGet);
+                    log.warn("[{}] Entry with id: {} has not key: {}", tagID, id, keyToGet);
                     entryBuffer = findEntryWithKey(plasmaClient, keyToGet, entryBuffer, plasmaTimeout);
                 }
             }
@@ -208,11 +208,11 @@ public class WorkerThread extends Thread {
                 sendStatusCode(tagID, "411", endpoint, worker, clientTimeout, scope);
             }
         }
-        log.info("GET operation completed");
+        log.info("[{}] GET operation completed", tagID);
     }
 
     private void deleteOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException, NullPointerException, IOException, ClassNotFoundException {
-        log.info("Start DEL operation");
+        log.info("[{}] Start DEL operation", tagID);
         try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
             final String keyToDelete = receiveKey(tagID, worker, clientTimeout, scope);
             final byte[] id = generateID(keyToDelete);
@@ -220,23 +220,23 @@ public class WorkerThread extends Thread {
             String statusCode = "421";
 
             if (plasmaClient.contains(id)) {
-                log.info("Entry with id {} exists", id);
+                log.info("[{}] Entry with id {} exists", tagID, id);
                 final PlasmaEntry entry = getPlasmaEntry(plasmaClient, id, plasmaTimeout);
                 statusCode = findAndDeleteEntryWithKey(plasmaClient, keyToDelete, entry, id, new byte[20], plasmaTimeout);
             }
 
             if ("221".equals(statusCode)) {
-                log.info("Object with key \"{}\" found and deleted", keyToDelete);
+                log.info("[{}] Object with key \"{}\" found and deleted", tagID, keyToDelete);
             } else {
-                log.warn("Object with key \"{}\" was not found in plasma store", keyToDelete);
+                log.warn("[{}] Object with key \"{}\" was not found in plasma store", tagID, keyToDelete);
             }
             sendStatusCode(tagID, statusCode, endpoint, worker, clientTimeout, scope);
         }
-        log.info("DEL operation completed");
+        log.info("[{}] DEL operation completed", tagID);
     }
 
     private void containsOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException {
-        log.info("Start CNT operation");
+        log.info("[{}] Start CNT operation", tagID);
         try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
             final String keyToGet = receiveKey(tagID, worker, clientTimeout, scope);
             final byte[] id = generateID(keyToGet);
@@ -247,7 +247,7 @@ public class WorkerThread extends Thread {
                 sendStatusCode(tagID, "431", endpoint, worker, clientTimeout, scope);
             }
         }
-        log.info("CNT operation completed");
+        log.info("[{}] CNT operation completed", tagID);
     }
 
     private void hashOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException {
@@ -270,7 +270,7 @@ public class WorkerThread extends Thread {
     }
 
     private void listOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws ControlException, TimeoutException, CloseException {
-        log.info("Start LST operation");
+        log.info("[{}] Start LST operation", tagID);
         try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
             final List<byte[]> entries = plasmaClient.list();
             sendSingleInteger(tagID, entries.size(), endpoint, worker, clientTimeout, scope);
