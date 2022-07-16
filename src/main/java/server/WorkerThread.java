@@ -29,6 +29,8 @@ import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -66,6 +68,8 @@ public class WorkerThread extends Thread {
     private final PlasmaClient plasmaClient;
     private final int clientTimeout = 2000;
     private final int plasmaTimeout = 500;
+    public BlockingQueue<ConnectionRequest> connectionRequests = new LinkedBlockingQueue<ConnectionRequest>();
+    public BlockingQueue<Long> workQueue = new LinkedBlockingQueue<Long>();
     private boolean shutdown = false;
 
 
@@ -107,35 +111,67 @@ public class WorkerThread extends Thread {
     @Override
     public void run() {
         while (!shutdown) {
-            worker.await();
-            String operationName;
-            for (int i = 0; i < endpointsAndTags.size(); i++) {
-                final Pair<Endpoint, Integer> pair = endpointsAndTags.get(i);
-                final Endpoint endpoint = pair.getLeft();
-                final int tagID = pair.getRight();
+            ConnectionRequest request;
+            while ((request = connectionRequests.poll()) != null) {
+                log.info("b");
                 try {
-                    operationName = receiveOperationName(tagID, worker, clientTimeout);
-                } catch (final Exception e) {
+                    addClient(request);
+                } catch (TimeoutException e) {
                     log.error(e.getMessage());
-                    operationName = "";
                 }
-                try {
-                    switch (operationName) {
-                        case "PUT" -> putOperation(tagID, worker, endpoint);
-                        case "GET" -> getOperation(tagID, worker, endpoint);
-                        case "DEL" -> deleteOperation(tagID, worker, endpoint);
-                        case "CNT" -> containsOperation(tagID, worker, endpoint);
-                        case "HSH" -> hashOperation(tagID, worker, endpoint);
-                        case "LST" -> listOperation(tagID, worker, endpoint);
-                        case "REG" -> regOperation(tagID, worker, endpoint);
-                        case "INF" -> infOperation(tagID, worker, endpoint);
-                        case "BYE" -> {
-                            //sendStatusCode(tagID, "BYE", endpoint, worker, clientTimeout, ResourceScope.newConfinedScope());
+            }
+            if (!endpointsAndTags.isEmpty()) {
+                log.info("before await");
+                //worker.await();
+                log.info("after await");
+                String operationName;
+                for (int i = 0; i < endpointsAndTags.size(); i++) {
+                    final Pair<Endpoint, Integer> pair = endpointsAndTags.get(i);
+                    final Endpoint endpoint = pair.getLeft();
+                    final int tagID = pair.getRight();
+                    log.info("tagID: {}", tagID);
+
+                    try {
+                        final int currentTagID = receiveInteger(tagID, worker, clientTimeout, ResourceScope.newConfinedScope());
+                        if (currentTagID == tagID) {
+                            final int newTagID = runningTagID.incrementAndGet();
+                            sendSingleInteger(tagID, newTagID, endpoint, worker, clientTimeout, ResourceScope.newConfinedScope());
+                            endpointsAndTags.set(i, Pair.of(endpoint, newTagID));
+                            operationName = receiveOperationName(newTagID, worker, clientTimeout);
+                            switch (operationName) {
+                                case "PUT" -> putOperation(newTagID, worker, endpoint);
+                                case "GET" -> getOperation(newTagID, worker, endpoint);
+                                case "DEL" -> deleteOperation(newTagID, worker, endpoint);
+                                case "CNT" -> containsOperation(newTagID, worker, endpoint);
+                                case "HSH" -> hashOperation(newTagID, worker, endpoint);
+                                case "LST" -> listOperation(newTagID, worker, endpoint);
+                                case "REG" -> regOperation(newTagID, worker, endpoint);
+                                case "INF" -> infOperation(newTagID, worker, endpoint);
+                                case "BYE" -> removeClient(i);
+                            }
+                        }
+
+                    } catch (final ClassNotFoundException | TimeoutException | ControlException | CloseException |
+                                   IOException e) {
+                        log.error(e.getMessage());
+                        try {
                             removeClient(i);
+                        } catch (final TimeoutException ex) {
+                            log.error(ex.getMessage());
                         }
                     }
-                } catch (final ClassNotFoundException | TimeoutException | ControlException | CloseException |
-                               IOException e) {
+                }
+            }
+        }
+    }
+
+    public void run2() {
+        while (!shutdown) {
+            Long request;
+            while ((request = workQueue.poll()) != null) {
+                try {
+                    awaitRequests(new long[]{request}, worker, clientTimeout);
+                } catch (final TimeoutException e) {
                     log.error(e.getMessage());
                 }
             }
@@ -327,7 +363,7 @@ public class WorkerThread extends Thread {
         } catch (final TimeoutException e) {
             endpoint.close();
         }
-        endpoint.close();
+        //endpoint.close();
         resourceScopes.remove(index).close();
     }
 

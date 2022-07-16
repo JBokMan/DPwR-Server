@@ -257,7 +257,7 @@ public class DPwRServer {
             while (!connectionQueue.isEmpty()) {
                 final ConnectionRequest request = connectionQueue.remove();
                 final WorkerThread currentWorkerThread = this.workerPool.getNextWorkerThread();
-                currentWorkerThread.addClient(request);
+                currentWorkerThread.connectionRequests.add(request);
             }
         }
     }
