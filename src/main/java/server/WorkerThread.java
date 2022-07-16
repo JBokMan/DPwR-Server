@@ -61,7 +61,7 @@ public class WorkerThread extends Thread {
     private static final ContextParameters.Feature[] FEATURE_SET = {ContextParameters.Feature.TAG, ContextParameters.Feature.RMA, ContextParameters.Feature.WAKEUP};
     private final ResourcePool resources = new ResourcePool();
     private final Context context;
-    private final Worker worker;
+    public final Worker worker;
     private final List<Pair<Endpoint, Integer>> endpointsAndTags = new ArrayList<>();
     private final List<ResourceScope> resourceScopes = new ArrayList<>();
     private final AtomicInteger runningTagID = new AtomicInteger(0);
@@ -111,6 +111,7 @@ public class WorkerThread extends Thread {
     @Override
     public void run() {
         while (!shutdown) {
+            worker.await();
             ConnectionRequest request;
             while ((request = connectionRequests.poll()) != null) {
                 log.info("b");
@@ -121,9 +122,6 @@ public class WorkerThread extends Thread {
                 }
             }
             if (!endpointsAndTags.isEmpty()) {
-                log.info("before await");
-                //worker.await();
-                log.info("after await");
                 String operationName;
                 for (int i = 0; i < endpointsAndTags.size(); i++) {
                     final Pair<Endpoint, Integer> pair = endpointsAndTags.get(i);
