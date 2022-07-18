@@ -37,7 +37,7 @@ public class HashUtils {
             }
             if (text.contains("timeout_test")) {
                 try {
-                    TimeUnit.MILLISECONDS.sleep(600);
+                    TimeUnit.MILLISECONDS.sleep(2100);
                 } catch (final InterruptedException e) {
                     log.error(e.getMessage());
                 }
