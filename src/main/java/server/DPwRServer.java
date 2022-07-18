@@ -257,9 +257,14 @@ public class DPwRServer {
             Requests.await(this.worker, connectionQueue);
             while (!connectionQueue.isEmpty()) {
                 final ConnectionRequest request = connectionQueue.remove();
-                final WorkerThread currentWorkerThread = this.workerPool.getNextWorkerThread();
-                currentWorkerThread.connectionRequests.add(request);
-                currentWorkerThread.worker.signal();
+                boolean delegated = false;
+                while (!delegated) {
+                    final WorkerThread currentWorkerThread = this.workerThreadPool.getNextWorkerThread();
+                    delegated = currentWorkerThread.connectionRequests.offer(request);
+                    if (delegated) {
+                        currentWorkerThread.worker.signal();
+                    }
+                }
             }
         }
     }
