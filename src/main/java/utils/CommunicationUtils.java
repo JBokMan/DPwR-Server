@@ -108,6 +108,7 @@ public class CommunicationUtils {
     }
 
     public static void sendSingleInteger(final int tagID, final int integer, final Endpoint endpoint, final Worker worker, final int timeoutMs, final ResourceScope scope) throws TimeoutException {
+        log.info("[{}] send number {}", tagID, integer);
         final ByteBuffer byteBuffer = ByteBuffer.allocate(Integer.BYTES).putInt(integer);
         sendSingleByteArray(tagID, byteBuffer.array(), endpoint, worker, timeoutMs, scope);
     }
