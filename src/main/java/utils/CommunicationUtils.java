@@ -65,7 +65,7 @@ public class CommunicationUtils {
         return endpoint.sendTagged(descriptor, Tag.of(tagID));
     }
 
-    private static void awaitRequest(final long request, final Worker worker, final int timeoutMs) throws TimeoutException, InterruptedException {
+    private static void awaitRequest(final long request, final Worker worker, final int timeoutMs) throws TimeoutException {
         final long timeout = 1_000L * timeoutMs;
         int counter = 0;
         Requests.State requestState = state(request);
@@ -91,7 +91,7 @@ public class CommunicationUtils {
             }
             try {
                 awaitRequest(requests[i], worker, timeoutMs);
-            } catch (final TimeoutException | InterruptedException e) {
+            } catch (final TimeoutException e) {
                 timeoutHappened = true;
                 worker.cancelRequest(requests[i]);
             }
