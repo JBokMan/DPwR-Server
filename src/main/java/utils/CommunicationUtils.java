@@ -2,12 +2,15 @@ package utils;
 
 import de.hhu.bsinfo.infinileap.binding.Context;
 import de.hhu.bsinfo.infinileap.binding.ControlException;
+import de.hhu.bsinfo.infinileap.binding.DataType;
 import de.hhu.bsinfo.infinileap.binding.Endpoint;
 import de.hhu.bsinfo.infinileap.binding.MemoryDescriptor;
 import de.hhu.bsinfo.infinileap.binding.MemoryRegion;
 import de.hhu.bsinfo.infinileap.binding.RequestParameters;
 import de.hhu.bsinfo.infinileap.binding.Tag;
 import de.hhu.bsinfo.infinileap.binding.Worker;
+import de.hhu.bsinfo.infinileap.primitive.NativeInteger;
+import de.hhu.bsinfo.infinileap.primitive.NativeLong;
 import de.hhu.bsinfo.infinileap.util.CloseException;
 import de.hhu.bsinfo.infinileap.util.Requests;
 import jdk.incubator.foreign.MemorySegment;
@@ -264,12 +267,9 @@ public class CommunicationUtils {
         return statusCode;
     }
 
-    public static String receiveOperationName(final int tagID, final Worker worker, final int timeoutMs) throws TimeoutException, SerializationException {
-        final String operationName;
-        try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
-            final ByteBuffer statusCodeByteBuffer = receiveData(tagID, 6, worker, timeoutMs, scope);
-            operationName = String.valueOf(statusCodeByteBuffer.getChar()) + statusCodeByteBuffer.getChar() + statusCodeByteBuffer.getChar();
-        }
+    public static String receiveOperationName(final int tagID, final Worker worker, final int timeoutMs, final ResourceScope scope) throws TimeoutException, SerializationException {
+        final ByteBuffer statusCodeByteBuffer = receiveData(tagID, 6, worker, timeoutMs, scope);
+        final String operationName = String.valueOf(statusCodeByteBuffer.getChar()) + statusCodeByteBuffer.getChar() + statusCodeByteBuffer.getChar();
         log.info("[{}] Received operation name: \"{}\"", tagID, operationName);
         return operationName;
     }
@@ -295,6 +295,33 @@ public class CommunicationUtils {
             deleteById(plasmaClient, id);
             return "402";
         }
+    }
+
+    public static void streamTagID(final int tagID, final Endpoint endpoint, final Worker worker, final int timeout, final ResourceScope scope) throws TimeoutException {
+        // Allocate a buffer and write numbers into it
+        final var buffer = MemorySegment.allocateNative(Integer.BYTES, scope);
+        final var first = NativeInteger.map(buffer, 0L);
+        first.set(tagID);
+        // Send the buffer to the server
+        log.info("Sending first chunk of stream");
+        final var request = endpoint.sendStream(first, new RequestParameters()
+                .setDataType(first.dataType()));
+        awaitRequests(new long[]{request}, worker, timeout);
+    }
+
+    public static int receiveTagIDAsStream(final Endpoint endpoint, final Worker worker, final int timeout, final ResourceScope scope) throws TimeoutException {
+        final var buffer = MemorySegment.allocateNative(Integer.BYTES, scope);
+        final var length = new NativeLong();
+
+        log.info("Receiving stream");
+        final var request = endpoint.receiveStream(buffer, 1, length, new RequestParameters()
+                .setDataType(DataType.CONTIGUOUS_32_BIT)
+                .setFlags(RequestParameters.Flag.STREAM_WAIT));
+
+        awaitRequests(new long[]{request}, worker, timeout);
+
+        final var first = NativeInteger.map(buffer, 0L);
+        return first.get();
     }
 
     public static void tearDownEndpoint(final Endpoint endpoint, final Worker worker, final int timeoutMs) {

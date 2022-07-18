@@ -57,12 +57,11 @@ import static utils.PlasmaUtils.getPlasmaEntryFromBuffer;
 @Slf4j
 public class WorkerThread extends Thread {
     private static final ErrorHandler errorHandler = new DPwRErrorHandler();
-    private static final ContextParameters.Feature[] FEATURE_SET = {ContextParameters.Feature.TAG, ContextParameters.Feature.RMA, ContextParameters.Feature.WAKEUP};
+    private static final ContextParameters.Feature[] FEATURE_SET = {ContextParameters.Feature.TAG, ContextParameters.Feature.RMA, ContextParameters.Feature.WAKEUP, ContextParameters.Feature.STREAM};
     public final Worker worker;
     private final ResourcePool resources = new ResourcePool();
     private final Context context;
     private final List<Pair<Endpoint, Integer>> endpointsAndTags = new ArrayList<>();
-    private final List<ResourceScope> resourceScopes = new ArrayList<>();
     private final AtomicInteger runningTagID = new AtomicInteger(0);
     private final PlasmaClient plasmaClient;
     private final int clientTimeout = 500;
@@ -88,22 +87,27 @@ public class WorkerThread extends Thread {
     }
 
     public void addClient(final ConnectionRequest request) {
-        resourceScopes.add(ResourceScope.newSharedScope());
-        final int tagID = runningTagID.incrementAndGet();
-        final Pair<Endpoint, Integer> pair;
-        try {
-            pair = Pair.of(establishConnection(request, resourceScopes.get(resourceScopes.size() - 1), tagID), tagID);
-            log.info("New Pair {}", pair);
-            endpointsAndTags.add(pair);
-            log.info("Full List: {}", endpointsAndTags);
-        } catch (final ControlException | TimeoutException e) {
-            removeClient(endpointsAndTags.size() - 1);
+        try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
+            final int tagID = runningTagID.incrementAndGet();
+            final Pair<Endpoint, Integer> pair;
+            try {
+                pair = Pair.of(establishConnection(request, scope, tagID), tagID);
+                log.info("New Pair {}", pair);
+                endpointsAndTags.add(pair);
+                log.info("Full List: {}", endpointsAndTags);
+            } catch (final ControlException | TimeoutException e) {
+                closeEndpoint(endpointsAndTags.size() - 1);
+            }
         }
     }
 
     private Endpoint establishConnection(final ConnectionRequest request, final ResourceScope scope, final int tagID) throws ControlException, TimeoutException {
-        final Endpoint endpoint = worker.createEndpoint(new EndpointParameters(scope).setConnectionRequest(request).setErrorHandler(errorHandler));
-        sendSingleInteger(0, tagID, endpoint, worker, clientTimeout, scope);
+        final Endpoint endpoint = worker.createEndpoint(new EndpointParameters(scope)
+                .setConnectionRequest(request)
+                .setErrorHandler(errorHandler)
+                .enableClientIdentifier());
+        streamTagID(tagID, endpoint, worker, clientTimeout, scope);
+        //sendSingleInteger(0, tagID, endpoint, worker, clientTimeout, scope);
         return endpoint;
     }
 
@@ -123,13 +127,15 @@ public class WorkerThread extends Thread {
                     final int tagID = pair.getRight();
                     log.info("Current TagID: [{}]", tagID);
 
-                    try {
-                        final int currentTagID = receiveInteger(tagID, worker, clientTimeout, ResourceScope.newConfinedScope());
-                        if (currentTagID == tagID) {
+                    try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
+                        int currentTagID = receiveTagIDAsStream(endpoint, worker, clientTimeout, scope);
+                        if (currentTagID != tagID) {
+                            sendSingleInteger(tagID, 0, endpoint, worker, clientTimeout, scope);
+                        } else {
                             final int newTagID = runningTagID.incrementAndGet();
-                            sendSingleInteger(tagID, newTagID, endpoint, worker, clientTimeout, ResourceScope.newConfinedScope());
+                            streamTagID(newTagID, endpoint, worker, clientTimeout, scope);
                             endpointsAndTags.set(i, Pair.of(endpoint, newTagID));
-                            operationName = receiveOperationName(newTagID, worker, clientTimeout);
+                            operationName = receiveOperationName(newTagID, worker, clientTimeout, scope);
                             switch (operationName) {
                                 case "PUT" -> putOperation(newTagID, worker, endpoint);
                                 case "GET" -> getOperation(newTagID, worker, endpoint);
@@ -139,22 +145,18 @@ public class WorkerThread extends Thread {
                                 case "LST" -> listOperation(newTagID, worker, endpoint);
                                 case "REG" -> regOperation(newTagID, worker, endpoint);
                                 case "INF" -> infOperation(newTagID, worker, endpoint);
-                                case "BYE" -> removeClient(i);
+                                case "BYE" -> closeEndpoint(i);
                             }
                         }
-
                     } catch (final ClassNotFoundException | TimeoutException | ControlException | CloseException |
                                    IOException e) {
                         log.error(e.getMessage());
-                        removeClient(i);
+                        closeEndpoint(i);
                     }
                 }
             }
         }
         try {
-            for (final ResourceScope scope : resourceScopes) {
-                scope.close();
-            }
             resources.close();
         } catch (final CloseException e) {
             log.error(e.getMessage());
@@ -337,11 +339,6 @@ public class WorkerThread extends Thread {
         log.info("INF operation completed");
     }
 
-    private void removeClient(final int index) {
-        closeEndpoint(index);
-        closeScope(index);
-    }
-
     private void closeEndpoint(final int index) {
         try {
             final Endpoint endpoint = endpointsAndTags.remove(index).getLeft();
@@ -351,14 +348,6 @@ public class WorkerThread extends Thread {
             } catch (final TimeoutException e) {
                 endpoint.close();
             }
-        } catch (final IndexOutOfBoundsException | IllegalStateException e) {
-            log.error(e.getMessage());
-        }
-    }
-
-    private void closeScope(final int index) {
-        try {
-            resourceScopes.remove(index).close();
         } catch (final IndexOutOfBoundsException | IllegalStateException e) {
             log.error(e.getMessage());
         }
