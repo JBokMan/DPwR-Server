@@ -24,7 +24,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.core.LoggerContext;
 import org.apache.logging.log4j.core.config.LoggerConfig;
 import utils.DPwRErrorHandler;
-import utils.WorkerPool;
+import utils.WorkerThreadPool;
 
 import java.net.ConnectException;
 import java.net.InetSocketAddress;
@@ -56,11 +56,12 @@ public class DPwRServer {
     private final int workerCount;
     private final ResourcePool resources = new ResourcePool();
     private Worker worker;
+    @SuppressWarnings("FieldCanBeLocal")
     private Context context;
     // listener parameter need to stay in memory, since it holds the callback for new connection requests
     @SuppressWarnings("FieldCanBeLocal")
     private ListenerParameters listenerParameters;
-    private WorkerPool workerPool;
+    private WorkerThreadPool workerThreadPool;
 
     public DPwRServer(final InetSocketAddress listenAddress, final int plasmaStoreSize, final int clientTimeout, final int workerCount, final Boolean verbose) {
         this.listenAddress = listenAddress;
@@ -197,7 +198,7 @@ public class DPwRServer {
             log.error("Closing resource failed", e);
         } catch (final InterruptedException e) {
             log.error("Unexpected interrupt occurred", e);
-        } catch (TimeoutException e) {
+        } catch (final TimeoutException e) {
             throw new RuntimeException(e);
         }
     }
@@ -217,14 +218,14 @@ public class DPwRServer {
         this.worker = pushResource(context.createWorker(workerParameters));
 
         // worker pool count must be greater than thread count since the endpoint closes not fast enough
-        this.workerPool = new WorkerPool(this.workerCount, workerParameters);
+        this.workerThreadPool = new WorkerThreadPool(this.workerCount, workerParameters);
 
         // Creating clean up hook
         final Thread cleanUpThread = new Thread(() -> {
             log.warn("Attempting graceful shutdown");
             try {
                 PlasmaServer.cleanup();
-                workerPool.close();
+                workerThreadPool.close();
                 log.info("Closing Resources");
                 resources.close();
             } catch (final Exception e) {
