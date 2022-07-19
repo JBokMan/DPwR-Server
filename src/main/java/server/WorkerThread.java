@@ -27,6 +27,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -91,26 +92,32 @@ public class WorkerThread extends Thread {
     public void addClient(final ConnectionRequest request) {
         try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
             final int tagID = runningTagID.incrementAndGet();
-            final Pair<Endpoint, Integer> pair;
+            final Endpoint endpoint;
             try {
-                pair = Pair.of(establishConnection(request, scope, tagID), tagID);
-                log.info("New Pair {}", pair);
-                endpointsAndTags.add(pair);
-                log.info("Full List: {}", endpointsAndTags);
-            } catch (final ControlException | TimeoutException e) {
-                closeEndpoint(endpointsAndTags.size() - 1);
+                endpoint = establishConnection(request, scope);
+            } catch (final ControlException e) {
+                log.error(e.getMessage());
+                return;
             }
+            try {
+                sendFirstTagID(tagID, endpoint, scope);
+            } catch (final TimeoutException e) {
+                closeEndpoint(endpoint);
+            }
+            endpointsAndTags.add(Pair.of(endpoint, tagID));
+            log.info("Full Map: {}", endpointsAndTags);
         }
     }
 
-    private Endpoint establishConnection(final ConnectionRequest request, final ResourceScope scope, final int tagID) throws ControlException, TimeoutException {
-        final Endpoint endpoint = worker.createEndpoint(new EndpointParameters(scope)
+    private Endpoint establishConnection(final ConnectionRequest request, final ResourceScope scope) throws ControlException {
+        return worker.createEndpoint(new EndpointParameters(scope)
                 .setConnectionRequest(request)
                 .setErrorHandler(errorHandler)
                 .enableClientIdentifier());
+    }
+
+    private void sendFirstTagID(final int tagID, final Endpoint endpoint, final ResourceScope scope) throws TimeoutException {
         streamTagID(tagID, endpoint, worker, clientTimeout, scope);
-        //sendSingleInteger(0, tagID, endpoint, worker, clientTimeout, scope);
-        return endpoint;
     }
 
     @Override
@@ -122,6 +129,7 @@ public class WorkerThread extends Thread {
                 addClient(request);
             }
             if (!endpointsAndTags.isEmpty()) {
+                final ArrayList<Integer> toBeRemoved = new ArrayList<>();
                 String operationName;
                 for (int i = 0; i < endpointsAndTags.size(); i++) {
                     final Pair<Endpoint, Integer> pair = endpointsAndTags.get(i);
@@ -130,7 +138,7 @@ public class WorkerThread extends Thread {
                     log.info("Current TagID: [{}]", tagID);
 
                     try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
-                        int currentTagID = receiveTagIDAsStream(endpoint, worker, clientTimeout, scope);
+                        final int currentTagID = receiveTagIDAsStream(endpoint, worker, clientTimeout, scope);
                         if (currentTagID != tagID) {
                             sendSingleInteger(tagID, 0, endpoint, worker, clientTimeout, scope);
                         } else {
@@ -147,14 +155,23 @@ public class WorkerThread extends Thread {
                                 case "LST" -> listOperation(newTagID, worker, endpoint);
                                 case "REG" -> regOperation(newTagID, worker, endpoint);
                                 case "INF" -> infOperation(newTagID, worker, endpoint);
-                                case "BYE" -> closeEndpoint(i);
+                                case "BYE" -> {
+                                    closeEndpoint(endpoint);
+                                    toBeRemoved.add(i);
+                                }
                             }
                         }
                     } catch (final ClassNotFoundException | TimeoutException | ControlException | CloseException |
                                    IOException e) {
                         log.error(e.getMessage());
-                        closeEndpoint(i);
+                        closeEndpoint(endpoint);
+                        toBeRemoved.add(i);
                     }
+                }
+                // Sorts descending such that we delete higher indices first
+                toBeRemoved.sort(Comparator.reverseOrder());
+                for (final int index : toBeRemoved) {
+                    endpointsAndTags.remove(index);
                 }
             }
         }
@@ -341,9 +358,8 @@ public class WorkerThread extends Thread {
         log.info("INF operation completed");
     }
 
-    private void closeEndpoint(final int index) {
+    private void closeEndpoint(final Endpoint endpoint) {
         try {
-            final Endpoint endpoint = endpointsAndTags.remove(index).getLeft();
             final long[] request = new long[]{endpoint.closeNonBlocking(new RequestParameters().setFlags(RequestParameters.Flag.CLOSE_FORCE))};
             try {
                 awaitRequests(request, worker, clientTimeout);
