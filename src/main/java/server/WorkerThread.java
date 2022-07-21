@@ -132,37 +132,37 @@ public class WorkerThread extends Thread {
                     final Pair<Endpoint, Integer> pair = endpointsAndTags.get(i);
                     final Endpoint endpoint = pair.getLeft();
                     final int tagID = pair.getRight();
+                    final int newTagID = runningTagID.incrementAndGet();
                     log.info("Current TagID: [{}]", tagID);
 
                     try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
-                        final int currentTagID = receiveTagIDAsStream(endpoint, worker, clientTimeout, scope);
-                        if (currentTagID != tagID) {
-                            sendSingleInteger(tagID, 0, endpoint, worker, clientTimeout, scope);
-                        } else {
-                            final int newTagID = runningTagID.incrementAndGet();
-                            streamTagID(newTagID, endpoint, worker, clientTimeout, scope);
-                            endpointsAndTags.set(i, Pair.of(endpoint, newTagID));
-                            operationName = receiveOperationName(newTagID, worker, clientTimeout, scope);
-                            switch (operationName) {
-                                case "PUT" -> putOperation(newTagID, worker, endpoint);
-                                case "GET" -> getOperation(newTagID, worker, endpoint);
-                                case "DEL" -> deleteOperation(newTagID, worker, endpoint);
-                                case "CNT" -> containsOperation(newTagID, worker, endpoint);
-                                case "HSH" -> hashOperation(newTagID, worker, endpoint);
-                                case "LST" -> listOperation(newTagID, worker, endpoint);
-                                case "REG" -> regOperation(newTagID, worker, endpoint);
-                                case "INF" -> infOperation(newTagID, worker, endpoint);
-                                case "BYE" -> {
-                                    closeEndpoint(endpoint);
-                                    toBeRemoved.add(i);
-                                }
+                        receiveTagIDAsStream(endpoint, worker, clientTimeout, scope);
+                        streamTagID(newTagID, endpoint, worker, clientTimeout, scope);
+                        endpointsAndTags.set(i, Pair.of(endpoint, newTagID));
+                        operationName = receiveOperationName(newTagID, worker, clientTimeout, scope);
+                        switch (operationName) {
+                            case "PUT" -> putOperation(newTagID, worker, endpoint);
+                            case "GET" -> getOperation(newTagID, worker, endpoint);
+                            case "DEL" -> deleteOperation(newTagID, worker, endpoint);
+                            case "CNT" -> containsOperation(newTagID, worker, endpoint);
+                            case "HSH" -> hashOperation(newTagID, worker, endpoint);
+                            case "LST" -> listOperation(newTagID, worker, endpoint);
+                            case "REG" -> regOperation(newTagID, worker, endpoint);
+                            case "INF" -> infOperation(newTagID, worker, endpoint);
+                            case "BYE" -> {
+                                closeEndpoint(endpoint);
+                                toBeRemoved.add(i);
                             }
                         }
+
                     } catch (final ClassNotFoundException | TimeoutException | ControlException | CloseException |
                                    IOException e) {
                         log.error(e.getMessage());
-                        closeEndpoint(endpoint);
-                        toBeRemoved.add(i);
+                        //Remove stale endpoints
+                        if (tagID + 100 * endpointsAndTags.size() < newTagID) {
+                            closeEndpoint(endpoint);
+                            toBeRemoved.add(i);
+                        }
                     }
                 }
                 // Sorts descending such that we delete higher indices first
