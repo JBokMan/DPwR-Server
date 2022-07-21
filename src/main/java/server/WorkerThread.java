@@ -222,11 +222,13 @@ public class WorkerThread extends Thread {
 
             if (plasmaClient.contains(id)) {
                 entryBuffer = plasmaClient.getObjAsByteBuffer(id, plasmaTimeout, false);
-                final PlasmaEntry entry = getPlasmaEntryFromBuffer(entryBuffer);
+                if (entryBuffer != null) {
+                    final PlasmaEntry entry = getPlasmaEntryFromBuffer(entryBuffer);
 
-                if (!StringUtils.equals(keyToGet, entry.key)) {
-                    log.warn("[{}] Entry with id: {} has not key: {}", tagID, id, keyToGet);
-                    entryBuffer = findEntryWithKey(plasmaClient, keyToGet, entryBuffer, plasmaTimeout);
+                    if (!StringUtils.equals(keyToGet, entry.key)) {
+                        log.warn("[{}] Entry with id: {} has not key: {}", tagID, id, keyToGet);
+                        entryBuffer = findEntryWithKey(plasmaClient, keyToGet, entryBuffer, plasmaTimeout);
+                    }
                 }
             }
 
