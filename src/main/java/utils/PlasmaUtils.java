@@ -41,12 +41,18 @@ public class PlasmaUtils {
 
     public static PlasmaEntry getPlasmaEntry(final PlasmaClient client, final byte[] id, final int timeoutMs) throws IOException, ClassNotFoundException {
         final byte[] entry = client.get(id, timeoutMs, false);
+        if (entry == null || entry.length == 0) {
+            return null;
+        }
         return deserializePlasmaEntry(entry);
     }
 
     public static void updateNextIdOfEntry(final PlasmaClient plasmaClient, final byte[] idToUpdate, final byte[] newNextId, final int plasmaTimeoutMs) throws IOException, ClassNotFoundException {
         log.info("Update entry of id {}", idToUpdate);
         final PlasmaEntry entryToUpdate = getPlasmaEntry(plasmaClient, idToUpdate, plasmaTimeoutMs);
+        if (entryToUpdate == null) {
+            return;
+        }
         deleteById(plasmaClient, idToUpdate);
         final PlasmaEntry updatedEntry = new PlasmaEntry(entryToUpdate.key, entryToUpdate.value, newNextId);
         saveObjectToPlasma(plasmaClient, idToUpdate, serialize(updatedEntry));

@@ -16,6 +16,7 @@ import de.hhu.bsinfo.infinileap.util.ResourcePool;
 import jdk.incubator.foreign.ResourceScope;
 import lombok.extern.slf4j.Slf4j;
 import model.PlasmaEntry;
+import org.apache.arrow.plasma.exceptions.DuplicateObjectException;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -185,27 +186,35 @@ public class WorkerThread extends Thread {
             final String keyToPut = receiveKey(tagID, worker, clientTimeout, scope);
             byte[] id = generateID(keyToPut);
             final int entrySize = receiveInteger(tagID, worker, clientTimeout, scope);
-            final String statusCode;
+            String statusCode = "403";
+            PlasmaEntry plasmaEntry = null;
 
             if (plasmaClient.contains(id)) {
                 log.warn("[{}] Plasma does contain the id", tagID);
-                final PlasmaEntry plasmaEntry = getPlasmaEntry(plasmaClient, id, plasmaTimeout);
-                final byte[] objectIdWithFreeNextID = getObjectIdOfNextEntryWithEmptyNextID(plasmaClient, plasmaEntry, id, keyToPut, plasmaTimeout);
+                plasmaEntry = getPlasmaEntry(plasmaClient, id, plasmaTimeout);
+                if (plasmaEntry != null) {
+                    final byte[] objectIdWithFreeNextID = getObjectIdOfNextEntryWithEmptyNextID(plasmaClient, plasmaEntry, id, keyToPut, plasmaTimeout);
 
-                if (ArrayUtils.isEmpty(objectIdWithFreeNextID)) {
-                    log.warn("[{}] Object with key is already in plasma", tagID);
-                    statusCode = "400";
-                } else {
-                    log.warn("[{}] Key is not in plasma, handling id collision", tagID);
-                    id = generateNextIdOfId(objectIdWithFreeNextID);
+                    if (ArrayUtils.isEmpty(objectIdWithFreeNextID)) {
+                        log.warn("[{}] Object with key is already in plasma", tagID);
+                        statusCode = "400";
+                    } else {
+                        log.warn("[{}] Key is not in plasma, handling id collision", tagID);
+                        id = generateNextIdOfId(objectIdWithFreeNextID);
 
-                    createEntryAndSendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, clientTimeout, scope);
-                    statusCode = awaitPutCompletionSignal(tagID, plasmaClient, id, worker, objectIdWithFreeNextID, clientTimeout, plasmaTimeout, scope);
+                        createEntryAndSendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, clientTimeout, scope);
+                        statusCode = awaitPutCompletionSignal(tagID, plasmaClient, id, worker, objectIdWithFreeNextID, clientTimeout, plasmaTimeout, scope);
+                    }
                 }
-            } else {
+            }
+            if (plasmaEntry == null) {
                 log.info("[{}] Plasma does not contain the id", tagID);
-                createEntryAndSendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, clientTimeout, scope);
-                statusCode = awaitPutCompletionSignal(tagID, plasmaClient, id, worker, null, clientTimeout, plasmaTimeout, scope);
+                try {
+                    createEntryAndSendNewEntryAddress(tagID, plasmaClient, id, entrySize, endpoint, worker, context, clientTimeout, scope);
+                    statusCode = awaitPutCompletionSignal(tagID, plasmaClient, id, worker, null, clientTimeout, plasmaTimeout, scope);
+                } catch (final DuplicateObjectException e) {
+                    statusCode = "400";
+                }
             }
             sendStatusCode(tagID, statusCode, endpoint, worker, clientTimeout, scope);
         }
@@ -258,10 +267,13 @@ public class WorkerThread extends Thread {
 
             String statusCode = "421";
 
+            PlasmaEntry entry = null;
             if (plasmaClient.contains(id)) {
                 log.info("[{}] Entry with id {} exists", tagID, id);
-                final PlasmaEntry entry = getPlasmaEntry(plasmaClient, id, plasmaTimeout);
-                statusCode = findAndDeleteEntryWithKey(plasmaClient, keyToDelete, entry, id, new byte[20], plasmaTimeout);
+                entry = getPlasmaEntry(plasmaClient, id, plasmaTimeout);
+                if (entry != null) {
+                    statusCode = findAndDeleteEntryWithKey(plasmaClient, keyToDelete, entry, id, new byte[20], plasmaTimeout);
+                }
             }
 
             if ("221".equals(statusCode)) {
