@@ -34,6 +34,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static server.PlasmaServer.initializePlasmaClient;
 import static server.PlasmaServer.startPlasmaStore;
 import static utils.CommunicationUtils.receiveAddress;
 import static utils.CommunicationUtils.receiveInteger;
@@ -74,6 +75,7 @@ public class DPwRServer {
         }
         startPlasmaStore(plasmaStoreSize);
         initPlasmaLibrary();
+        initializePlasmaClient();
         serverID = 0;
         serverMap.put(0, this.listenAddress);
     }

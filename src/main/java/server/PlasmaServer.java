@@ -20,6 +20,7 @@
 package server;
 
 import lombok.extern.slf4j.Slf4j;
+import org.apache.arrow.plasma.PlasmaClient;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -32,6 +33,7 @@ public class PlasmaServer {
     private static final String storeSuffix = "/tmp/plasma";
     private static int storePort;
     private static Process storeProcess;
+    public static PlasmaClient plasmaClient;
 
     private static Process startProcess(final String[] cmd) {
         final ProcessBuilder builder;
@@ -99,5 +101,9 @@ public class PlasmaServer {
 
     public static String getStoreAddress() {
         return storeSuffix + storePort;
+    }
+
+    public static void initializePlasmaClient() {
+        plasmaClient = new PlasmaClient(PlasmaServer.getStoreAddress(), "", 0);
     }
 }

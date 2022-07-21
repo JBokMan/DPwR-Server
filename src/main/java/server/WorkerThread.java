@@ -16,7 +16,6 @@ import de.hhu.bsinfo.infinileap.util.ResourcePool;
 import jdk.incubator.foreign.ResourceScope;
 import lombok.extern.slf4j.Slf4j;
 import model.PlasmaEntry;
-import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -34,6 +33,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static server.PlasmaServer.plasmaClient;
 import static utils.CommunicationUtils.awaitPutCompletionSignal;
 import static utils.CommunicationUtils.awaitRequests;
 import static utils.CommunicationUtils.createEntryAndSendNewEntryAddress;
@@ -66,7 +66,6 @@ public class WorkerThread extends Thread {
     private final Context context;
     private final List<Pair<Endpoint, Integer>> endpointsAndTags = new ArrayList<>();
     private final AtomicInteger runningTagID = new AtomicInteger(0);
-    private final PlasmaClient plasmaClient;
     private final int clientTimeout = 500;
     private final int plasmaTimeout = 500;
     public BlockingQueue<ConnectionRequest> connectionRequests = new LinkedBlockingQueue<>();
@@ -74,8 +73,6 @@ public class WorkerThread extends Thread {
 
 
     public WorkerThread(final WorkerParameters workerParameters) throws ControlException {
-        this.plasmaClient = new PlasmaClient(PlasmaServer.getStoreAddress(), "", 0);
-
         NativeLogger.enable();
         log.info("Using UCX version {}", Context.getVersion());
 
