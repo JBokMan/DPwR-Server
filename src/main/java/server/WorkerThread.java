@@ -67,7 +67,7 @@ public class WorkerThread extends Thread {
     private final Context context;
     private final List<Pair<Endpoint, Integer>> endpointsAndTags = new ArrayList<>();
     private final AtomicInteger runningTagID = new AtomicInteger(0);
-    private final int clientTimeout = 500;
+    private final int clientTimeout = 300;
     private final int plasmaTimeout = 500;
     public BlockingQueue<ConnectionRequest> connectionRequests = new LinkedBlockingQueue<>();
     private boolean shutdown = false;
@@ -160,7 +160,7 @@ public class WorkerThread extends Thread {
                                    IOException e) {
                         log.error(e.getMessage());
                         //Remove stale endpoints
-                        if (tagID + 100 * endpointsAndTags.size() < newTagID) {
+                        if (tagID + 10 * endpointsAndTags.size() < newTagID) {
                             closeEndpoint(endpoint);
                             toBeRemoved.add(i);
                         }
