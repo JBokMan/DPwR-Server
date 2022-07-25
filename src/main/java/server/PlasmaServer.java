@@ -51,9 +51,8 @@ public class PlasmaServer {
         return p;
     }
 
-    public static void startPlasmaStore(int plasmaStoreSize) {
-        final int occupiedMemoryMB = plasmaStoreSize;
-        final long memoryBytes = occupiedMemoryMB * 1000000L;
+    public static void startPlasmaStore(final int plasmaStoreSize) {
+        final long memoryBytes = plasmaStoreSize * 1000000L;
         int numRetries = 10;
         Process p = null;
         while (numRetries-- > 0) {

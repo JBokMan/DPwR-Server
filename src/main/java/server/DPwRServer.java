@@ -50,7 +50,7 @@ public class DPwRServer {
     public static final AtomicInteger serverCount = new AtomicInteger(1);
     private static final ErrorHandler errorHandler = new DPwRErrorHandler();
     private static final ContextParameters.Feature[] FEATURE_SET = {ContextParameters.Feature.TAG, ContextParameters.Feature.RMA, ContextParameters.Feature.WAKEUP};
-    public static Map<Integer, InetSocketAddress> serverMap = new HashMap<>();
+    public static final Map<Integer, InetSocketAddress> serverMap = new HashMap<>();
     public static int serverID = -1;
     private final InetSocketAddress listenAddress;
     private final int clientTimeout;
@@ -148,22 +148,21 @@ public class DPwRServer {
 
         final String statusCode = receiveStatusCode(tagID, worker, clientTimeout, scope);
 
-        if ("200".equals(statusCode)) {
-            final int serverCount = receiveInteger(tagID, worker, clientTimeout, scope);
-            DPwRServer.serverCount.set(serverCount);
-            serverID = serverCount - 1;
-
-            for (int i = 0; i < serverCount; i++) {
-                final InetSocketAddress serverAddress = receiveAddress(tagID, worker, clientTimeout, scope);
-                serverMap.put(i, serverAddress);
+        switch (statusCode) {
+            case "200" -> {
+                final int serverCount = receiveInteger(tagID, worker, clientTimeout, scope);
+                DPwRServer.serverCount.set(serverCount);
+                serverID = serverCount - 1;
+                for (int i = 0; i < serverCount; i++) {
+                    final InetSocketAddress serverAddress = receiveAddress(tagID, worker, clientTimeout, scope);
+                    serverMap.put(i, serverAddress);
+                }
+                serverMap.put(serverID, this.listenAddress);
             }
-            serverMap.put(serverID, this.listenAddress);
-        } else if ("206".equals(statusCode)) {
-            throw new ConnectException("Given address was of a secondary server and not of the main server");
-        } else if ("400".equals(statusCode)) {
-            throw new ConnectException("This server was already registered");
-        } else {
-            throw new ConnectException("Main server could not be reached");
+            case "206" ->
+                    throw new ConnectException("Given address was of a secondary server and not of the main server");
+            case "400" -> throw new ConnectException("This server was already registered");
+            default -> throw new ConnectException("Main server could not be reached");
         }
         endpoint.close();
     }
@@ -200,8 +199,6 @@ public class DPwRServer {
             log.error("Closing resource failed", e);
         } catch (final InterruptedException e) {
             log.error("Unexpected interrupt occurred", e);
-        } catch (final TimeoutException e) {
-            throw new RuntimeException(e);
         }
     }
 
@@ -219,7 +216,7 @@ public class DPwRServer {
         final WorkerParameters workerParameters = new WorkerParameters().setThreadMode(ThreadMode.SINGLE);
         this.worker = pushResource(context.createWorker(workerParameters));
 
-        // worker pool count must be greater than thread count since the endpoint closes not fast enough
+        // Create worker thread pool
         this.workerThreadPool = new WorkerThreadPool(this.workerCount, workerParameters);
 
         // Creating clean up hook
@@ -243,16 +240,18 @@ public class DPwRServer {
     }
 
     @SuppressWarnings("InfiniteLoopStatement")
-    private void listenLoop() throws ControlException, InterruptedException, TimeoutException {
+    private void listenLoop() throws ControlException, InterruptedException {
         final LinkedBlockingQueue<ConnectionRequest> connectionQueue = new LinkedBlockingQueue<>();
 
         log.info("Listening for new connection requests on {}", listenAddress);
-        this.listenerParameters = new ListenerParameters().setListenAddress(listenAddress).setConnectionHandler(new ConnectionHandler() {
-            @Override
-            protected void onConnection(final ConnectionRequest request) {
-                connectionQueue.add(request);
-            }
-        });
+        this.listenerParameters = new ListenerParameters()
+                .setListenAddress(listenAddress)
+                .setConnectionHandler(new ConnectionHandler() {
+                    @Override
+                    protected void onConnection(final ConnectionRequest request) {
+                        connectionQueue.add(request);
+                    }
+                });
         pushResource(this.worker.createListener(this.listenerParameters));
 
         while (true) {
@@ -262,9 +261,9 @@ public class DPwRServer {
                 boolean delegated = false;
                 while (!delegated) {
                     final WorkerThread currentWorkerThread = this.workerThreadPool.getNextWorkerThread();
-                    delegated = currentWorkerThread.connectionRequests.offer(request);
+                    delegated = currentWorkerThread.offerNewConnectionRequest(request);
                     if (delegated) {
-                        currentWorkerThread.worker.signal();
+                        currentWorkerThread.signalNewConnectionRequestArrival();
                     }
                 }
             }

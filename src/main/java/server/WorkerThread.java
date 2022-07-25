@@ -62,14 +62,14 @@ import static utils.PlasmaUtils.getPlasmaEntryFromBuffer;
 public class WorkerThread extends Thread {
     private static final ErrorHandler errorHandler = new DPwRErrorHandler();
     private static final ContextParameters.Feature[] FEATURE_SET = {ContextParameters.Feature.TAG, ContextParameters.Feature.RMA, ContextParameters.Feature.WAKEUP, ContextParameters.Feature.STREAM};
-    public final Worker worker;
+    private final Worker worker;
     private final ResourcePool resources = new ResourcePool();
     private final Context context;
     private final List<Pair<Endpoint, Integer>> endpointsAndTags = new ArrayList<>();
     private final AtomicInteger runningTagID = new AtomicInteger(0);
     private final int clientTimeout = 300;
     private final int plasmaTimeout = 500;
-    public BlockingQueue<ConnectionRequest> connectionRequests = new LinkedBlockingQueue<>();
+    private final BlockingQueue<ConnectionRequest> connectionRequests = new LinkedBlockingQueue<>();
     private boolean shutdown = false;
 
 
@@ -85,6 +85,14 @@ public class WorkerThread extends Thread {
         // Create a worker
         log.info("Creating worker");
         this.worker = pushResource(context.createWorker(workerParameters));
+    }
+
+    public boolean offerNewConnectionRequest(final ConnectionRequest request) {
+        return this.connectionRequests.offer(request);
+    }
+
+    public void signalNewConnectionRequestArrival() {
+        worker.signal();
     }
 
     public void addClient(final ConnectionRequest request) {
@@ -121,11 +129,14 @@ public class WorkerThread extends Thread {
     @Override
     public void run() {
         while (!shutdown) {
+            // Thread sleeps until worker.signal is called or endpoints have new requests
             worker.await();
             ConnectionRequest request;
+            // Add all new clients and thus empty connection requests queue
             while ((request = connectionRequests.poll()) != null) {
                 addClient(request);
             }
+            // If there are connected clients do one operation for each
             if (!endpointsAndTags.isEmpty()) {
                 final ArrayList<Integer> toBeRemoved = new ArrayList<>();
                 String operationName;
@@ -159,7 +170,7 @@ public class WorkerThread extends Thread {
                     } catch (final ClassNotFoundException | TimeoutException | ControlException | CloseException |
                                    IOException e) {
                         log.error(e.getMessage());
-                        //Remove stale endpoints
+                        // Remove stale endpoints
                         if (tagID + 10 * endpointsAndTags.size() < newTagID) {
                             closeEndpoint(endpoint);
                             toBeRemoved.add(i);
@@ -267,7 +278,7 @@ public class WorkerThread extends Thread {
 
             String statusCode = "421";
 
-            PlasmaEntry entry = null;
+            final PlasmaEntry entry;
             if (plasmaClient.contains(id)) {
                 log.info("[{}] Entry with id {} exists", tagID, id);
                 entry = getPlasmaEntry(plasmaClient, id, plasmaTimeout);

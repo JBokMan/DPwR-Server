@@ -21,7 +21,6 @@ public class HashUtils {
             id = getMD5Hash(key);
         } catch (final NoSuchAlgorithmException e) {
             log.error("The MD5 hash algorithm was not found.", e);
-            //ToDo handle exception
         }
         final byte[] fullID = ArrayUtils.addAll(id, new byte[4]);
         log.info("FullID: {} of key: {}", fullID, key);

@@ -87,16 +87,16 @@ public class CommunicationUtils {
 
     public static void awaitRequests(final long[] requests, final Worker worker, final int timeoutMs) throws TimeoutException {
         boolean timeoutHappened = false;
-        for (int i = 0; i < requests.length; i++) {
+        for (final long request : requests) {
             if (timeoutHappened) {
-                worker.cancelRequest(requests[i]);
+                worker.cancelRequest(request);
                 continue;
             }
             try {
-                awaitRequest(requests[i], worker, timeoutMs);
+                awaitRequest(request, worker, timeoutMs);
             } catch (final TimeoutException e) {
                 timeoutHappened = true;
-                worker.cancelRequest(requests[i]);
+                worker.cancelRequest(request);
             }
         }
         if (timeoutHappened) {
@@ -106,8 +106,8 @@ public class CommunicationUtils {
     }
 
     private static void sendSingleByteArray(final int tagID, final byte[] data, final Endpoint endpoint, final Worker worker, final int timeoutMs, final ResourceScope scope) throws TimeoutException {
-        final long request = prepareToSendData(tagID, data, endpoint, scope);
-        awaitRequests(new long[]{request}, worker, timeoutMs);
+        final long[] request = new long[]{prepareToSendData(tagID, data, endpoint, scope)};
+        awaitRequests(request, worker, timeoutMs);
     }
 
     public static void sendSingleInteger(final int tagID, final int integer, final Endpoint endpoint, final Worker worker, final int timeoutMs, final ResourceScope scope) throws TimeoutException {
@@ -151,8 +151,8 @@ public class CommunicationUtils {
         } catch (final UnsupportedOperationException e) {
             log.error(e.getMessage());
         }
-        final long request = prepareToSendRemoteKey(tagID, objectAddress, endpoint);
-        awaitRequests(new long[]{request}, worker, timeoutMs);
+        final long[] request = new long[]{prepareToSendRemoteKey(tagID, objectAddress, endpoint)};
+        awaitRequests(request, worker, timeoutMs);
     }
 
     public static void sendObjectAddress(final int tagID, final byte[] object, final Endpoint endpoint, final Worker worker, final Context context, final int timeoutMs) throws CloseException, ControlException, TimeoutException {
@@ -163,8 +163,8 @@ public class CommunicationUtils {
         } catch (final UnsupportedOperationException e) {
             log.error(e.getMessage());
         }
-        final long request = prepareToSendRemoteKey(tagID, objectAddress, endpoint);
-        awaitRequests(new long[]{request}, worker, timeoutMs);
+        final long[] request = new long[]{prepareToSendRemoteKey(tagID, objectAddress, endpoint)};
+        awaitRequests(request, worker, timeoutMs);
     }
 
     public static void createEntryAndSendNewEntryAddress(final int tagID, final PlasmaClient plasmaClient, final byte[] id, final int entrySize, final Endpoint endpoint, final Worker worker, final Context context, final int timeoutMs, final ResourceScope scope) throws TimeoutException, ControlException, CloseException {
@@ -206,9 +206,7 @@ public class CommunicationUtils {
 
             for (int i = 1; i < currentServerCount * 2 + 1; i += 2) {
                 final long[] tmp_requests = prepareToSendAddress(tagID, serverMap.get((i - 2 + 1) / 2), endpoint, scope);
-                for (int j = 0; j < 2; j++) {
-                    requests[i + j] = tmp_requests[j];
-                }
+                System.arraycopy(tmp_requests, 0, requests, i, 2);
             }
             awaitRequests(requests, worker, timeoutMs);
         }
@@ -216,8 +214,8 @@ public class CommunicationUtils {
 
     private static ByteBuffer receiveData(final int tagID, final int size, final Worker worker, final int timeoutMs, final ResourceScope scope) throws TimeoutException {
         final MemorySegment buffer = MemorySegment.allocateNative(size, scope);
-        final long request = worker.receiveTagged(buffer, Tag.of(tagID));
-        awaitRequests(new long[]{request}, worker, timeoutMs);
+        final long[] request = new long[]{worker.receiveTagged(buffer, Tag.of(tagID))};
+        awaitRequests(request, worker, timeoutMs);
         return buffer.asByteBuffer();
     }
 
@@ -237,8 +235,8 @@ public class CommunicationUtils {
         final InetSocketAddress address;
         final int addressSize = receiveInteger(tagID, worker, timeoutMs, scope);
         final MemorySegment buffer = MemorySegment.allocateNative(addressSize, scope);
-        final long request = worker.receiveTagged(buffer, Tag.of(tagID), new RequestParameters(scope));
-        awaitRequests(new long[]{request}, worker, timeoutMs);
+        final long[] request = new long[]{worker.receiveTagged(buffer, Tag.of(tagID), new RequestParameters(scope))};
+        awaitRequests(request, worker, timeoutMs);
         address = deserialize(buffer.toArray(ValueLayout.JAVA_BYTE));
         return address;
     }
@@ -299,39 +297,26 @@ public class CommunicationUtils {
 
     public static void streamTagID(final int tagID, final Endpoint endpoint, final Worker worker, final int timeout, final ResourceScope scope) throws TimeoutException {
         // Allocate a buffer and write numbers into it
-        final var buffer = MemorySegment.allocateNative(Integer.BYTES, scope);
-        final var first = NativeInteger.map(buffer, 0L);
-        first.set(tagID);
-        // Send the buffer to the server
-        log.info("Sending first chunk of stream");
-        final var request = endpoint.sendStream(first, new RequestParameters()
-                .setDataType(first.dataType()));
-        awaitRequests(new long[]{request}, worker, timeout);
+        final MemorySegment buffer = MemorySegment.allocateNative(Integer.BYTES, scope);
+        final NativeInteger integerToSend = NativeInteger.map(buffer, 0L);
+        integerToSend.set(tagID);
+        // Send the buffer to the client
+        final long[] request = new long[]{endpoint.sendStream(integerToSend, new RequestParameters()
+                .setDataType(integerToSend.dataType()))};
+        awaitRequests(request, worker, timeout);
     }
 
-    public static int receiveTagIDAsStream(final Endpoint endpoint, final Worker worker, final int timeout, final ResourceScope scope) throws TimeoutException {
-        final var buffer = MemorySegment.allocateNative(Integer.BYTES, scope);
-        final var length = new NativeLong();
+    public static void receiveTagIDAsStream(final Endpoint endpoint, final Worker worker, final int timeout, final ResourceScope scope) throws TimeoutException {
+        final MemorySegment buffer = MemorySegment.allocateNative(Integer.BYTES, scope);
+        final NativeLong length = new NativeLong();
 
-        log.info("Receiving stream");
-        final var request = endpoint.receiveStream(buffer, 1, length, new RequestParameters()
+        final long[] request = new long[]{endpoint.receiveStream(buffer, 1, length, new RequestParameters()
                 .setDataType(DataType.CONTIGUOUS_32_BIT)
-                .setFlags(RequestParameters.Flag.STREAM_WAIT));
+                .setFlags(RequestParameters.Flag.STREAM_WAIT))};
 
-        awaitRequests(new long[]{request}, worker, timeout);
+        awaitRequests(request, worker, timeout);
 
-        final var first = NativeInteger.map(buffer, 0L);
-        return first.get();
-    }
-
-    public static void tearDownEndpoint(final Endpoint endpoint, final Worker worker, final int timeoutMs) {
-        try {
-            final long[] requests = new long[2];
-            requests[0] = endpoint.flush();
-            requests[1] = endpoint.closeNonBlocking();
-            awaitRequests(requests, worker, timeoutMs);
-        } catch (final TimeoutException e) {
-            log.warn(e.getMessage());
-        }
+        final NativeInteger receivedInteger = NativeInteger.map(buffer, 0L);
+        receivedInteger.get();
     }
 }

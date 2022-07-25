@@ -8,12 +8,10 @@ import java.util.ArrayList;
 
 public class WorkerThreadPool {
     final ArrayList<WorkerThread> pool;
-    final WorkerParameters workerParameters;
     int nextWorkerId = 0;
 
     public WorkerThreadPool(final int count, final WorkerParameters workerParameters) throws ControlException {
         this.pool = new ArrayList<>();
-        this.workerParameters = workerParameters;
         for (int i = 0; i < count; i++) {
             this.pool.add(new WorkerThread(workerParameters));
             this.pool.get(i).start();
