@@ -21,7 +21,6 @@ import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.SerializationException;
 
-import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -39,6 +38,15 @@ import static utils.PlasmaUtils.updateNextIdOfEntry;
 @Slf4j
 public class CommunicationUtils {
 
+    private final static RequestParameters receiveStreamRequestParams = new RequestParameters()
+            .setDataType(DataType.CONTIGUOUS_32_BIT)
+            .setFlags(RequestParameters.Flag.STREAM_WAIT);
+
+    private final static RequestParameters sendStreamRequestParams = new RequestParameters()
+            .setDataType(DataType.CONTIGUOUS_32_BIT);
+
+    private final static NativeLong nativeLengthLong = new NativeLong();
+
     private static Long prepareToSendData(final int tagID, final byte[] data, final Endpoint endpoint, final ResourceScope scope) {
         log.info("[{}] Prepare to send data", tagID);
         final int dataSize = data.length;
@@ -47,7 +55,7 @@ public class CommunicationUtils {
         final MemorySegment buffer = MemorySegment.allocateNative(dataSize, scope);
         buffer.copyFrom(source);
 
-        return endpoint.sendTagged(buffer, Tag.of(tagID), new RequestParameters(scope));
+        return endpoint.sendTagged(buffer, Tag.of(tagID));
     }
 
     private static Long prepareToSendInteger(final int tagID, final int integer, final Endpoint endpoint, final ResourceScope scope) {
@@ -272,17 +280,25 @@ public class CommunicationUtils {
         return operationName;
     }
 
-    public static String awaitPutCompletionSignal(final int tagID, final PlasmaClient plasmaClient, final byte[] id, final Worker worker, final byte[] idToUpdate, final int timeoutMs, final int plasmaTimeoutMs, final ResourceScope scope) throws SerializationException, IOException, ClassNotFoundException {
+    public static String awaitPutCompletionSignal(final int tagID, final PlasmaClient plasmaClient, final byte[] id, final Worker worker, final byte[] idToUpdate, final int timeoutMs, final int plasmaTimeoutMs, final ResourceScope scope) throws SerializationException {
         final String receivedStatusCode;
         try {
             receivedStatusCode = receiveStatusCode(tagID, worker, timeoutMs, scope);
         } catch (final TimeoutException | SerializationException e) {
-            plasmaClient.seal(id);
+            try {
+                plasmaClient.seal(id);
+            } catch (final Exception e1) {
+                return "404";
+            }
             deleteById(plasmaClient, id);
             return "401";
         }
         if ("201".equals(receivedStatusCode)) {
-            plasmaClient.seal(id);
+            try {
+                plasmaClient.seal(id);
+            } catch (final Exception e) {
+                return "405";
+            }
             if (ObjectUtils.isNotEmpty(idToUpdate)) {
                 updateNextIdOfEntry(plasmaClient, idToUpdate, id, plasmaTimeoutMs);
             }
@@ -297,26 +313,16 @@ public class CommunicationUtils {
 
     public static void streamTagID(final int tagID, final Endpoint endpoint, final Worker worker, final int timeout, final ResourceScope scope) throws TimeoutException {
         // Allocate a buffer and write numbers into it
-        final MemorySegment buffer = MemorySegment.allocateNative(Integer.BYTES, scope);
-        final NativeInteger integerToSend = NativeInteger.map(buffer, 0L);
+        final NativeInteger integerToSend = new NativeInteger(tagID, scope);
         integerToSend.set(tagID);
         // Send the buffer to the client
-        final long[] request = new long[]{endpoint.sendStream(integerToSend, new RequestParameters()
-                .setDataType(integerToSend.dataType()))};
+        final long[] request = new long[]{endpoint.sendStream(integerToSend, sendStreamRequestParams)};
         awaitRequests(request, worker, timeout);
     }
 
     public static void receiveTagIDAsStream(final Endpoint endpoint, final Worker worker, final int timeout, final ResourceScope scope) throws TimeoutException {
         final MemorySegment buffer = MemorySegment.allocateNative(Integer.BYTES, scope);
-        final NativeLong length = new NativeLong();
-
-        final long[] request = new long[]{endpoint.receiveStream(buffer, 1, length, new RequestParameters()
-                .setDataType(DataType.CONTIGUOUS_32_BIT)
-                .setFlags(RequestParameters.Flag.STREAM_WAIT))};
-
+        final long[] request = new long[]{endpoint.receiveStream(buffer, 1, nativeLengthLong, receiveStreamRequestParams)};
         awaitRequests(request, worker, timeout);
-
-        final NativeInteger receivedInteger = NativeInteger.map(buffer, 0L);
-        receivedInteger.get();
     }
 }

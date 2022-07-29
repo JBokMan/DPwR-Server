@@ -6,10 +6,6 @@ import org.apache.arrow.plasma.PlasmaClient;
 import org.apache.arrow.plasma.exceptions.DuplicateObjectException;
 import org.apache.arrow.plasma.exceptions.PlasmaOutOfMemoryException;
 
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.io.ObjectInput;
-import java.io.ObjectInputStream;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 
@@ -36,15 +32,15 @@ public class PlasmaUtils {
         plasmaClient.seal(id);
     }
 
-    public static PlasmaEntry getPlasmaEntry(final PlasmaClient client, final byte[] id, final int timeoutMs) throws IOException, ClassNotFoundException {
+    public static PlasmaEntry getPlasmaEntry(final PlasmaClient client, final byte[] id, final int timeoutMs) {
         final byte[] entry = client.get(id, timeoutMs, false);
         if (entry == null || entry.length == 0) {
             return null;
         }
-        return deserializePlasmaEntry(entry);
+        return deserialize(entry);
     }
 
-    public static void updateNextIdOfEntry(final PlasmaClient plasmaClient, final byte[] idToUpdate, final byte[] newNextId, final int plasmaTimeoutMs) throws IOException, ClassNotFoundException {
+    public static void updateNextIdOfEntry(final PlasmaClient plasmaClient, final byte[] idToUpdate, final byte[] newNextId, final int plasmaTimeoutMs) {
         log.info("Update entry of id {}", idToUpdate);
         final PlasmaEntry entryToUpdate = getPlasmaEntry(plasmaClient, idToUpdate, plasmaTimeoutMs);
         if (entryToUpdate == null) {
@@ -73,24 +69,14 @@ public class PlasmaUtils {
         return currentID;
     }
 
-    public static PlasmaEntry getPlasmaEntryFromBuffer(final ByteBuffer objectBuffer) throws IOException, ClassNotFoundException {
+    public static PlasmaEntry getPlasmaEntryFromBuffer(final ByteBuffer objectBuffer) {
         final byte[] data = new byte[objectBuffer.remaining()];
         objectBuffer.get(data);
         objectBuffer.position(0);
-        return deserializePlasmaEntry(data);
+        return deserialize(data);
     }
 
-    public static PlasmaEntry deserializePlasmaEntry(final byte[] entryBytes) throws IOException, ClassNotFoundException {
-        final PlasmaEntry entry;
-        try (final ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(entryBytes)) {
-            try (final ObjectInput objectInputStream = new ObjectInputStream(byteArrayInputStream)) {
-                entry = (PlasmaEntry) objectInputStream.readObject();
-            }
-        }
-        return entry;
-    }
-
-    public static ByteBuffer findEntryWithKey(final PlasmaClient plasmaClient, final String key, final ByteBuffer startBuffer, final int plasmaTimeoutMs) throws IOException, ClassNotFoundException {
+    public static ByteBuffer findEntryWithKey(final PlasmaClient plasmaClient, final String key, final ByteBuffer startBuffer, final int plasmaTimeoutMs) {
         ByteBuffer currentBuffer = startBuffer;
         PlasmaEntry currentEntry = getPlasmaEntryFromBuffer(currentBuffer);
 
@@ -107,7 +93,7 @@ public class PlasmaUtils {
         }
     }
 
-    public static String findAndDeleteEntryWithKey(final PlasmaClient plasmaClient, final String keyToDelete, final PlasmaEntry startEntry, final byte[] startID, final byte[] previousID, final int plasmaTimeoutMs) throws IOException, ClassNotFoundException {
+    public static String findAndDeleteEntryWithKey(final PlasmaClient plasmaClient, final String keyToDelete, final PlasmaEntry startEntry, final byte[] startID, final byte[] previousID, final int plasmaTimeoutMs) {
         final byte[] nextID = startEntry.nextPlasmaID;
 
         if (keyToDelete.equals(startEntry.key)) {
