@@ -235,10 +235,6 @@ public class CommunicationUtils {
         return number;
     }
 
-    public static int receiveTagID(final Worker worker, final int timeoutMs, final ResourceScope scope) throws TimeoutException {
-        return receiveInteger(0, worker, timeoutMs, scope);
-    }
-
     public static InetSocketAddress receiveAddress(final int tagID, final Worker worker, final int timeoutMs, final ResourceScope scope) throws TimeoutException, SerializationException {
         final InetSocketAddress address;
         final int addressSize = receiveInteger(tagID, worker, timeoutMs, scope);
@@ -320,9 +316,18 @@ public class CommunicationUtils {
         awaitRequests(request, worker, timeout);
     }
 
-    public static void receiveTagIDAsStream(final Endpoint endpoint, final Worker worker, final int timeout, final ResourceScope scope) throws TimeoutException {
+    public static void requestTagIDToVerifyConnection(final Endpoint endpoint, final Worker worker, final int timeout, final ResourceScope scope) throws TimeoutException {
         final MemorySegment buffer = MemorySegment.allocateNative(Integer.BYTES, scope);
         final long[] request = new long[]{endpoint.receiveStream(buffer, 1, nativeLengthLong, receiveStreamRequestParams)};
         awaitRequests(request, worker, timeout);
+    }
+
+    public static int receiveTagIDAsStream(final Endpoint endpoint, final Worker worker, final int timeOut, final ResourceScope scope) throws TimeoutException {
+        final MemorySegment buffer = MemorySegment.allocateNative(Integer.BYTES, scope);
+        final long[] request = new long[]{endpoint.receiveStream(buffer, 1, nativeLengthLong, receiveStreamRequestParams)};
+        awaitRequests(request, worker, timeOut);
+
+        final var value = NativeInteger.map(buffer, 0L);
+        return value.get();
     }
 }

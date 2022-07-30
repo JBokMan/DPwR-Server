@@ -43,7 +43,7 @@ import static utils.CommunicationUtils.receiveInteger;
 import static utils.CommunicationUtils.receiveKey;
 import static utils.CommunicationUtils.receiveOperationName;
 import static utils.CommunicationUtils.receiveStatusCode;
-import static utils.CommunicationUtils.receiveTagIDAsStream;
+import static utils.CommunicationUtils.requestTagIDToVerifyConnection;
 import static utils.CommunicationUtils.sendHash;
 import static utils.CommunicationUtils.sendObjectAddress;
 import static utils.CommunicationUtils.sendServerMap;
@@ -67,7 +67,7 @@ public class WorkerThread extends Thread {
     private final Context context;
     private final List<Pair<Endpoint, Integer>> endpointsAndTags = new ArrayList<>();
     private final AtomicInteger runningTagID = new AtomicInteger(0);
-    private final int clientTimeout = 300;
+    private final int clientTimeout = 500;
     private final int plasmaTimeout = 500;
     private final BlockingQueue<ConnectionRequest> connectionRequests = new LinkedBlockingQueue<>();
     private boolean shutdown = false;
@@ -105,11 +105,6 @@ public class WorkerThread extends Thread {
                 log.error(e.getMessage());
                 return;
             }
-            try {
-                sendFirstTagID(tagID, endpoint, scope);
-            } catch (final TimeoutException e) {
-                closeEndpoint(endpoint);
-            }
             endpointsAndTags.add(Pair.of(endpoint, tagID));
             log.info("Full Map: {}", endpointsAndTags);
         }
@@ -120,10 +115,6 @@ public class WorkerThread extends Thread {
                 .setConnectionRequest(request)
                 .setErrorHandler(errorHandler)
                 .enableClientIdentifier());
-    }
-
-    private void sendFirstTagID(final int tagID, final Endpoint endpoint, final ResourceScope scope) throws TimeoutException {
-        streamTagID(tagID, endpoint, worker, clientTimeout, scope);
     }
 
     @Override
@@ -145,10 +136,10 @@ public class WorkerThread extends Thread {
                     final Endpoint endpoint = pair.getLeft();
                     final int tagID = pair.getRight();
                     final int newTagID = runningTagID.incrementAndGet();
-                    log.info("Current TagID: [{}]", tagID);
+                    log.info("Old TagID: [{}], new TagID: [{}]", tagID, newTagID);
 
                     try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
-                        receiveTagIDAsStream(endpoint, worker, clientTimeout, scope);
+                        requestTagIDToVerifyConnection(endpoint, worker, 500, scope);
                         streamTagID(newTagID, endpoint, worker, clientTimeout, scope);
                         endpointsAndTags.set(i, Pair.of(endpoint, newTagID));
                         operationName = receiveOperationName(newTagID, worker, clientTimeout, scope);
@@ -171,7 +162,7 @@ public class WorkerThread extends Thread {
                                    IOException e) {
                         log.error(e.getMessage());
                         // Remove stale endpoints
-                        if (tagID + 10 * endpointsAndTags.size() < newTagID) {
+                        if (tagID + 2 < newTagID) {
                             closeEndpoint(endpoint);
                             toBeRemoved.add(i);
                         }
@@ -313,7 +304,7 @@ public class WorkerThread extends Thread {
     }
 
     private void hashOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException {
-        log.info("Start HSH operation");
+        log.info("[{}] Start HSH operation", tagID);
         try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
             final String keyToGet = receiveKey(tagID, worker, clientTimeout, scope);
             final byte[] id = generateID(keyToGet);
@@ -328,7 +319,7 @@ public class WorkerThread extends Thread {
             }
             sendStatusCode(tagID, "242", endpoint, worker, clientTimeout, scope);
         }
-        log.info("HSH operation completed");
+        log.info("[{}] HSH operation completed", tagID);
     }
 
     private void listOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws ControlException, TimeoutException, CloseException {
@@ -342,54 +333,56 @@ public class WorkerThread extends Thread {
                 receiveStatusCode(tagID, worker, clientTimeout, scope);
             }
         }
-        log.info("LST operation completed");
+        log.info("[{}] LST operation completed", tagID);
     }
 
     private void regOperation(final int tagID, final Worker worker, final Endpoint endpoint) throws TimeoutException {
-        log.info("Start REG operation");
+        log.info("[{}] Start REG operation", tagID);
         try (final ResourceScope scope = ResourceScope.newConfinedScope()) {
             final InetSocketAddress newServerAddress = receiveAddress(tagID, worker, clientTimeout, scope);
 
             if (DPwRServer.serverMap.containsValue(newServerAddress)) {
-                sendStatusCode(tagID, "400", endpoint, worker, clientTimeout, scope);
+                sendStatusCode(tagID, "300", endpoint, worker, clientTimeout, scope);
                 return;
             }
 
             if (DPwRServer.serverID == 0) {
-                log.info("This is the main server");
+                log.info("[{}] This is the main server", tagID);
                 final int currentServerCount = DPwRServer.serverCount.incrementAndGet();
-                sendStatusCode(tagID, "200", endpoint, worker, clientTimeout, scope);
+                sendStatusCode(tagID, "100", endpoint, worker, clientTimeout, scope);
                 sendServerMap(tagID, DPwRServer.serverMap, worker, endpoint, currentServerCount, clientTimeout);
                 DPwRServer.serverMap.put(currentServerCount - 1, newServerAddress);
             } else {
-                log.info("This is a secondary server");
-                sendStatusCode(tagID, "206", endpoint, worker, clientTimeout, scope);
+                log.info("[{}] This is a secondary server", tagID);
+                sendStatusCode(tagID, "101", endpoint, worker, clientTimeout, scope);
                 final int serverID = receiveInteger(tagID, worker, clientTimeout, scope);
                 DPwRServer.serverMap.put(serverID, newServerAddress);
                 DPwRServer.serverCount.incrementAndGet();
             }
         }
         log.info(DPwRServer.serverMap.entrySet().toString());
-        log.info("REG operation completed");
+        log.info("[{}] REG operation completed", tagID);
     }
 
     private void infOperation(final int tagID, final Worker currentWorker, final Endpoint endpoint) throws TimeoutException {
-        log.info("Start INF operation");
+        log.info("[{}] Start INF operation", tagID);
         final int currentServerCount = DPwRServer.serverCount.get();
         sendServerMap(tagID, DPwRServer.serverMap, currentWorker, endpoint, currentServerCount, clientTimeout);
-        log.info("INF operation completed");
+        log.info("[{}] INF operation completed", tagID);
     }
 
     private void closeEndpoint(final Endpoint endpoint) {
-        try {
-            final long[] request = new long[]{endpoint.closeNonBlocking(new RequestParameters().setFlags(RequestParameters.Flag.CLOSE_FORCE))};
+        if (endpoint != null) {
             try {
-                awaitRequests(request, worker, clientTimeout);
-            } catch (final TimeoutException e) {
-                endpoint.close();
+                final long[] request = new long[]{endpoint.closeNonBlocking(new RequestParameters().setFlags(RequestParameters.Flag.CLOSE_FORCE))};
+                try {
+                    awaitRequests(request, worker, clientTimeout);
+                } catch (final TimeoutException e) {
+                    endpoint.close();
+                }
+            } catch (final IndexOutOfBoundsException | IllegalStateException e) {
+                log.error(e.getMessage());
             }
-        } catch (final IndexOutOfBoundsException | IllegalStateException e) {
-            log.error(e.getMessage());
         }
     }
 

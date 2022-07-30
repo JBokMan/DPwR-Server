@@ -36,13 +36,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static server.PlasmaServer.initializePlasmaClient;
 import static server.PlasmaServer.startPlasmaStore;
+import static utils.CommunicationUtils.awaitRequests;
 import static utils.CommunicationUtils.receiveAddress;
 import static utils.CommunicationUtils.receiveInteger;
 import static utils.CommunicationUtils.receiveStatusCode;
-import static utils.CommunicationUtils.receiveTagID;
+import static utils.CommunicationUtils.receiveTagIDAsStream;
 import static utils.CommunicationUtils.sendAddress;
 import static utils.CommunicationUtils.sendOperationName;
 import static utils.CommunicationUtils.sendSingleInteger;
+import static utils.CommunicationUtils.streamTagID;
 
 @Slf4j
 public class DPwRServer {
@@ -91,6 +93,7 @@ public class DPwRServer {
         }
         startPlasmaStore(plasmaStoreSize);
         initPlasmaLibrary();
+        initializePlasmaClient();
         registerServer(mainServerAddress);
     }
 
@@ -108,7 +111,7 @@ public class DPwRServer {
 
     private void registerServer(final InetSocketAddress mainServerAddress) throws ControlException, TimeoutException, ConnectException, SerializationException {
         try (final ResourcePool resourcePool = new ResourcePool(); final ResourceScope scope = ResourceScope.newConfinedScope()) {
-            final ContextParameters contextParameters = new ContextParameters(scope).setFeatures(ContextParameters.Feature.TAG);
+            final ContextParameters contextParameters = new ContextParameters(scope).setFeatures(ContextParameters.Feature.TAG, ContextParameters.Feature.STREAM);
             final Context context = Context.initialize(contextParameters, null);
             resourcePool.push(context);
 
@@ -142,14 +145,14 @@ public class DPwRServer {
         final EndpointParameters endpointParams = new EndpointParameters(scope).setRemoteAddress(mainServerAddress).setErrorHandler(errorHandler);
         final Endpoint endpoint = worker.createEndpoint(endpointParams);
 
-        final int tagID = receiveTagID(worker, clientTimeout, scope);
+        final int tagID = requestNewTagID(0, endpoint, worker, clientTimeout, scope);
         sendOperationName(tagID, "REG", endpoint, worker, clientTimeout, scope);
         sendAddress(tagID, this.listenAddress, endpoint, worker, clientTimeout);
 
         final String statusCode = receiveStatusCode(tagID, worker, clientTimeout, scope);
 
         switch (statusCode) {
-            case "200" -> {
+            case "100" -> {
                 final int serverCount = receiveInteger(tagID, worker, clientTimeout, scope);
                 DPwRServer.serverCount.set(serverCount);
                 serverID = serverCount - 1;
@@ -159,12 +162,12 @@ public class DPwRServer {
                 }
                 serverMap.put(serverID, this.listenAddress);
             }
-            case "206" ->
+            case "101" ->
                     throw new ConnectException("Given address was of a secondary server and not of the main server");
-            case "400" -> throw new ConnectException("This server was already registered");
+            case "300" -> throw new ConnectException("This server was already registered");
             default -> throw new ConnectException("Main server could not be reached");
         }
-        endpoint.close();
+        closeConnection(worker, scope, endpoint, tagID);
     }
 
     private void registerAtSecondary(final InetSocketAddress address, final Worker worker, final ResourceScope scope) throws TimeoutException, ConnectException, ControlException {
@@ -173,20 +176,30 @@ public class DPwRServer {
         final EndpointParameters endpointParams = new EndpointParameters(scope).setRemoteAddress(address).setErrorHandler(errorHandler);
         final Endpoint endpoint = worker.createEndpoint(endpointParams);
 
-        final int tagID = receiveTagID(worker, clientTimeout, scope);
+        final int tagID = requestNewTagID(0, endpoint, worker, clientTimeout, scope);
         sendOperationName(tagID, "REG", endpoint, worker, clientTimeout, scope);
         sendAddress(tagID, this.listenAddress, endpoint, worker, clientTimeout);
 
         final String statusCode = receiveStatusCode(tagID, worker, clientTimeout, scope);
 
         switch (statusCode) {
-            case "206" -> sendSingleInteger(tagID, serverID, endpoint, worker, clientTimeout, scope);
-            case "200" ->
+            case "101" -> sendSingleInteger(tagID, serverID, endpoint, worker, clientTimeout, scope);
+            case "100" ->
                     throw new ConnectException("Given address was of the main server and not of the secondary server");
-            case "400" -> throw new ConnectException("This server was already registered");
+            case "300" -> throw new ConnectException("This server was already registered");
             default -> throw new ConnectException("Secondary server could not be reached");
         }
-        endpoint.close();
+        closeConnection(worker, scope, endpoint, tagID);
+    }
+
+    private void closeConnection(final Worker worker, final ResourceScope scope, final Endpoint endpoint, int tagID) throws TimeoutException {
+        tagID = requestNewTagID(tagID, endpoint, worker, clientTimeout, scope);
+        sendOperationName(tagID, "BYE", endpoint, worker, clientTimeout, scope);
+    }
+
+    private int requestNewTagID(final int tagID, final Endpoint endpoint, final Worker worker, final int timeOut, final ResourceScope scope) throws TimeoutException {
+        streamTagID(tagID, endpoint, worker, timeOut, scope);
+        return receiveTagIDAsStream(endpoint, worker, timeOut, scope);
     }
 
     public void listen() {
