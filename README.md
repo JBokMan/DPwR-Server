@@ -1,9 +1,15 @@
-# InfinimumDB-Server
+# DPwR-Server
 
-## Prerequisites:
+The Distributed Plasma with RDMA (DPwR) Server application exposes the functionality of a locally running [Apache Plasma](https://github.com/apache/arrow/blob/master/cpp/apidoc/tutorials/plasma.md) store.
+This functionality can be effectively used by the [DPwR-Client](https://github.com/JBokMan/DPwR-Client) application.
+The server application adds the possibility to use Plasma distributed while utilizing Remote Direct Memory Access (RDMA) for PUT and GET operations through the use of [Infinileap](https://github.com/hhu-bsinfo/infinileap).
+The code in this project is experimental and written as part of a master thesis. Missing major features are tolerance against network partitioning and replication.
 
-### Pull Submodules
-After cloning the repository the submodules must also be pulled
+## Installation:
+
+### Clone Submodules
+After cloning the repository, the submodules must also be cloned, for example by using:
+
 ```git submodule update --init --recursive```
 
 Add to infinileap: infinileap/core/src/main/java/de/hhu/bsinfo/infinileap/util/Requests.java
@@ -46,26 +52,26 @@ To:
 - Install sdk-man
 1. ```curl -s "https://get.sdkman.io" | bash```
 2. ```source "$HOME/.sdkman/bin/sdkman-init.sh"```
-- Download panama installer from https://coconucos.cs.hhu.de/forschung/jdk/install and install java
+- Download panama installer from https://coconucos.cs.hhu.de/forschung/jdk/install and save it as panama-install.sh then run:
 3. ```bash panama-install.sh```
 4. ```sdk use java panama```
 
 ### Install Python
 1. ```curl https://pyenv.run | bash```
 2. ```pyenv install 3.8.3```
-- Download pip bootstrap from https://bootstrap.pypa.io/get-pip.py and install pip
+- Download pip bootstrap from https://bootstrap.pypa.io/get-pip.py save it as get-pip.py then run:
 3. ```python3 get-pip.py```
 
 ### Install Plasma server
 ```pip install pyarrow==8.0.*```
 
 ### Install UCX
-Install UCX from https://github.com/openucx/ucx/releases/tag/v1.12.1
+Install UCX from https://github.com/openucx/ucx/releases/tag/v1.13.0
 
 ### Install **Apache Arrow JNI** with make:
 
 1. install the latest version for development
-   of [CMake](https://askubuntu.com/questions/355565/how-do-i-install-the-latest-version-of-cmake-from-the-command-line)
+   of CMake as described in [Askubuntu](https://askubuntu.com/questions/355565/how-do-i-install-the-latest-version-of-cmake-from-the-command-line)
 2. run ```sudo apt-get install build-essential openjdk-17-jdk default-jdk```
 3. clone [Apache Arrow](https://github.com/apache/arrow) from GitHub
 4. run  ```cd arrow/cpp; mkdir release; cd release```
@@ -93,7 +99,7 @@ Install UCX from https://github.com/openucx/ucx/releases/tag/v1.12.1
 7. run ```sudo make install```
 
 ## How to run the server
-After cloning the repository run:
+After cloning the repository and finishing the [Installation](#installation) run:
 
 1. ```./gradlew shadowJar```
 2. ``` export UCX_ERROR_SIGNALS=""```
@@ -101,11 +107,11 @@ After cloning the repository run:
 
 ## How to gracefully shut down the server
 
-1. STRG + C
+1. In the terminal that runs the server use the shortcut CTRL + C
 
 Or
 
-1. Find the PID with for example ```ps -A | grep java```
+1. Find the PID with, for example ```ps -A | grep java```
 2. Run ```kill -s TERM <PID>``` where \<PID\> should be replaced with the correct PID
 
 ## Known Bugs/Problems:
@@ -122,7 +128,7 @@ BUG! exception in phase 'semantic analysis' in source unit '_BuildScript_' Unsup
 Solution
 ```sdk install java 17.0.3.6.1-amzn```
 ```sdk use java 17.0.3.6.1-amzn```
-For building java 17 is required but for running java 19 is required so after building run ```sdk use java panama```
+For building, Java 17 is required, but for running, Java 19 is required, so after building, run ```sdk use java panama```
 
 ### LibLLVM not found
 Exception in thread "main" java.lang.UnsatisfiedLinkError: /home/julian/.sdkman/candidates/java/panama/lib/libclang.so: libLLVM-11.so.1: cannot open shared object file: No such file or directory
@@ -134,11 +140,11 @@ Solution
 fatal error: 'uct/api/uct.h' file not found
 
 Solution
-install ucx follow the prerequisits
+install UCX by following the [Installation](#installation).
 
 ### Linkage error class file versions
 Error: LinkageError occurred while loading main class main.Application
-	java.lang.UnsupportedClassVersionError: main/Application has been compiled by a more recent version of the Java Runtime (class file version 63.0), this version of the Java Runtime only recognizes class file versions up to 61.0
+java.lang.UnsupportedClassVersionError: main/Application has been compiled by a more recent version of the Java Runtime (class file version 63.0), this version of the Java Runtime only recognizes class file versions up to 61.0
 
 Solution
 ```sdk use java panama```
@@ -168,7 +174,7 @@ Following error message appears when starting a server:
 Exception in thread "main" java.lang.UnsatisfiedLinkError: no plasma_java in java.library.path: /usr/java/packages/lib:/usr/lib64:/lib64:/lib:/usr/lib
 ```
 
-**Solution1:** You need to install the Apache Arrow JNI, follow the Prerequisites for that.
+**Solution1:** You need to install the Apache Arrow JNI. Follow the [Installation](#installation) for that.
 
 **Solution2:** The installed JNI is not found correctly. Add the path to the .../arrow/cpp/release/release folder to the LD_LIBRARY_PATH environment variable and to the java.library.path ```java -Djava.library.path=```
 
@@ -177,7 +183,7 @@ Following error message appears when running the server ```java.lang.Unsatisfied
 
 **Solution:**
 The libstdc++.so is not found in the java.library.path. Run ```find / -name 'libstdc++.so*' 2>/dev/null``` to see if a libstdc++.so exists.
-If there is one but it is not named exactly libstdc++.so create a symlink ```ln -s /path/to/libstdc++.so.something /where/you/want/libtsdc++.so```.
-Now add the symlink to the LD_LIBRARY_PATH environment variable and when starting the server add it to the library path with ```java -Djava.library.path=```.
+If there is one, but it is not named exactly libstdc++.so create a symlink ```ln -s /path/to/libstdc++.so.something /where/you/want/libtsdc++.so```.
+Now add the symlink to the LD_LIBRARY_PATH environment variable, and when starting the server, add it to the library path with ```java -Djava.library.path=```.
 
 If you did not find any libstdc++.so install the package ```libstdc++-10-dev``` via ```sudo apt-get install libstdc++-10-dev``` and you should find one.
